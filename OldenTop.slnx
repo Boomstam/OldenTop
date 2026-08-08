@@ -6,6 +6,7 @@
   <Project Path="com.IvanMurzak.Unity.MCP.DependencyResolver.csproj" />
   <Project Path="Extensions.Unity.PlayerPrefsEx.Tests.csproj" />
   <Project Path="com.IvanMurzak.Unity.MCP.TestFiles.csproj" />
+  <Project Path="Assembly-CSharp.csproj" />
   <Project Path="Extensions.Unity.PlayerPrefsEx.Editor.Tests.csproj" />
   <Project Path="com.IvanMurzak.Unity.MCP.Tests.csproj" />
 </Solution>

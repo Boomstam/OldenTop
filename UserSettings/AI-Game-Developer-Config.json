@@ -86,11 +86,11 @@
     },
     {
       "name": "editor-application-get-state",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "editor-application-set-state",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "editor-selection-get",
@@ -258,7 +258,7 @@
     },
     {
       "name": "screenshot-game-view",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "screenshot-isolated",
@@ -282,7 +282,7 @@
     },
     {
       "name": "script-update-or-create",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "tests-run",

@@ -9,8 +9,15 @@ This project uses the AI Game Developer MCP server through the Codex MCP entry n
 - The Unity-side config is `UserSettings/AI-Game-Developer-Config.json`, with `connectionMode` set to `Custom`.
 - The local MCP server listens on `http://localhost:23252`.
 - The package and its `PlayerPrefsEx` dependency are embedded under `Packages/`; do not replace them with registry references unless explicitly requested.
+- The embedded AI Game Developer package is currently version `0.82.3` and targets Unity `2022.3` or newer.
+- Tool registration and tool enablement are separate. Use `unity-tool-list` to discover registered tools; if a required registered tool is disabled, enable only that tool with `tool-set-enabled-state`. Changes persist in the Unity-side config.
+- `unity-mcp-cli` may not be on `PATH`. Before downloading anything, look for a cached executable under `~/.npm/_npx/*/node_modules/.bin/unity-mcp-cli`, or use the connected MCP tools directly.
 - Sandboxed localhost checks may fail even when the MCP server is healthy; use an unsandboxed local check when verification is needed.
 
 ## Working Style
+- Translate hard design constraints into explicit implementation invariants, then verify those exact invariants before handoff. Do not substitute a merely topologically similar representation (for example, adjacency links are not equivalent to geometry placed on hex edges).
 
-- Treat bandwidth as precious: prefer local files and caches, avoid unnecessary downloads, and keep checks lightweight.
+## Game Design Reference
+
+- Read `Docs/GameDesign/LIVING_GAME_DESIGN.md` when work depends on the game's intended rules, theme, systems, terminology, or prototype scope.
+- That document records exploratory brainstorming, not a frozen specification. Its contents are explicitly subject to revision through design work and playtesting.
