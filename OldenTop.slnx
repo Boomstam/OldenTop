@@ -1,0 +1,11 @@
+﻿<Solution>
+  <Project Path="com.IvanMurzak.Unity.MCP.Editor.csproj" />
+  <Project Path="com.IvanMurzak.Unity.MCP.Runtime.csproj" />
+  <Project Path="com.IvanMurzak.Unity.MCP.Editor.Tests.csproj" />
+  <Project Path="Extensions.Unity.PlayerPrefsEx.csproj" />
+  <Project Path="com.IvanMurzak.Unity.MCP.DependencyResolver.csproj" />
+  <Project Path="Extensions.Unity.PlayerPrefsEx.Tests.csproj" />
+  <Project Path="com.IvanMurzak.Unity.MCP.TestFiles.csproj" />
+  <Project Path="Extensions.Unity.PlayerPrefsEx.Editor.Tests.csproj" />
+  <Project Path="com.IvanMurzak.Unity.MCP.Tests.csproj" />
+</Solution>
