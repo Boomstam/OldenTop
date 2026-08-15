@@ -57,5 +57,18 @@ namespace OldenTop.Tests
             Assert.That(turnSystem.ActivePlayer, Is.EqualTo(1));
             Assert.That(turnSystem.SelectedWorker, Is.EqualTo(-1));
         }
+
+        [Test]
+        public void ResourceCatalog_HasExpectedOptions()
+        {
+            Assert.That(ResourceCatalog.GetOptions(Terrain.Mountain),
+                Is.EqualTo(new[] { Resource.Flintstone, Resource.Firestone }));
+            Assert.That(ResourceCatalog.GetOptions(Terrain.Plains),
+                Is.EqualTo(new[] { Resource.Grains, Resource.Aurochs }));
+            Assert.That(ResourceCatalog.GetOptions(Terrain.Water),
+                Is.EqualTo(new[] { Resource.Fish, Resource.Reeds }));
+            Assert.That(ResourceCatalog.GetOptions(Terrain.Woodland),
+                Is.EqualTo(new[] { Resource.Wood, Resource.Mushrooms }));
+        }
     }
 }

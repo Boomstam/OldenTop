@@ -67,35 +67,26 @@ Losing a person therefore means more than losing one action. A tribe might lose 
 Initial terrain types:
 
 - **Woodland**
-  - timber;
-  - fallen wood, small sticks, large sticks, and logs;
-  - berries;
-  - nuts;
+  - wood;
   - mushrooms;
-  - many animal populations, especially deer and some dangerous animals;
-  - possible hidden features such as nut groves, berry patches, beehives, ancient trees, and migration routes.
-- **Grassland**
-  - hare;
-  - mushrooms;
-  - berries;
+  - possible hidden features such as ancient trees and migration routes.
+- **Plains**
+  - grains;
+  - aurochs;
   - space for building;
   - convertible into farmland or pasture;
   - grazing and migratory opportunities.
 - **Mountain**
+  - flintstone;
   - firestone;
-  - flint;
-  - building stone;
-  - decorative or “pretty” stone;
-  - salt deposits/mines;
   - caves as natural shelter;
   - wolves and bears;
-  - comparatively rarer than woodland or grassland;
+  - comparatively rarer than woodland or plains;
   - possible features such as springs, sheltered valleys, seams, outcrops, and cave systems.
 - **Water**
   - lakes occupy hexes;
-  - reeds useful for rope;
   - fish;
-  - fresh water;
+  - reeds useful for rope;
   - fast movement once boats are available.
 
 ### 2.3 Rivers
@@ -116,10 +107,10 @@ Rivers may:
 
 The map should separate several layers:
 
-1. **Terrain:** woodland, grassland, mountain, lake; highly persistent.
-2. **Site/resource:** nut grove, berry patch, timber stand, mushrooms, reeds, flint seam, salt deposit, and so on; usually persistent but destroyable or replaceable.
+1. **Terrain:** woodland, plains, mountain, lake; highly persistent.
+2. **Site/resource:** wood, mushrooms, grains, aurochs, flintstone, firestone, fish, and reeds; usually persistent but destroyable or replaceable.
 3. **Current abundance:** high, normal, poor, or exhausted; fluctuates with years, seasons, exploitation, and events.
-4. **Landscape transformation:** rarer changes such as woodland becoming clearing, grassland becoming farmland, flood creating marsh, fire opening forest, mine collapse, or river-course change.
+4. **Landscape transformation:** rarer changes such as woodland becoming clearing, plains becoming farmland, flood creating marsh, fire opening forest, mine collapse, or river-course change.
 
 ### 2.5 Discovery and geographical knowledge
 
@@ -132,7 +123,7 @@ Geographical knowledge can live in people just like craft knowledge. A hunter mi
 Possible transformations include:
 
 - woodland → clearing → pasture or farmland;
-- grassland → farmland or pasture;
+- plains → farmland or pasture;
 - field exhaustion;
 - pasture overgrazing;
 - slow forest regrowth;
@@ -433,7 +424,7 @@ This creates distinct subsistence profiles:
 Animals should move, but the game should model populations or herds rather than every individual animal.
 
 - Deer herds may occupy woodland regions and migrate seasonally.
-- Aurochs can move between grassland and woodland.
+- Aurochs can move between plains and woodland.
 - Fish abundance fluctuates.
 - Predators move toward prey, livestock, or settlements.
 - Overhunting reduces or collapses populations.
@@ -509,7 +500,7 @@ Use only a few clear timing windows:
 Example:
 
 > **Flash Flood**  
-> BEFORE WORK: river-adjacent grassland floods.  
+> BEFORE WORK: river-adjacent plains flood.
 > DURING WORK: flooded hexes cannot be farmed or built on.  
 > AFTER WORK: unprotected food stored on flooded hexes is destroyed.
 
@@ -600,7 +591,7 @@ Proposed examples:
   - food may spoil faster;
   - water shortages become more dangerous.
 - **Great Bloom**
-  - grassland forage increases;
+  - plains forage increases;
   - hare and fowl thrive;
   - grazing improves;
   - later fire risk grows.
@@ -681,7 +672,7 @@ Sacred/strange events need not prove literal magic; they are events people inter
 
 **Aurochs Migration**
 
-- BEFORE WORK: move a herd through a predetermined route of grassland hexes.
+- BEFORE WORK: move a herd through a predetermined route of plains hexes.
 - DURING WORK: hunting and domestication attempts along the route gain bonuses.
 - Danger to unprotected people along the route rises.
 
@@ -754,7 +745,7 @@ Great calamities must be qualitatively larger than ordinary seasonal events and 
 
 - **Shock:** river-adjacent lowlands flood and unprotected stores there are destroyed.
 - **Crisis:** crossing rivers requires boats/bridges; fishing improves; floodplain buildings are threatened.
-- **Aftermath:** some grasslands become exceptionally fertile and a river may change course.
+- **Aftermath:** some plains become exceptionally fertile and a river may change course.
 - **Primary test:** geography and infrastructure; a prepared river civilization may benefit.
 
 #### The Black Winter
@@ -769,7 +760,7 @@ Great calamities must be qualitatively larger than ordinary seasonal events and 
 
 - **Shock:** minor water sources dry up.
 - **Crisis:** unirrigated agriculture collapses; pasture deteriorates; animals crowd around surviving water; wildfire risk rises.
-- **Aftermath:** some grassland degrades and surviving water becomes more strategically valuable.
+- **Aftermath:** some plains degrade and surviving water becomes more strategically valuable.
 - **Primary test:** water access, agriculture, geography, and mobility.
 
 #### The Burning Land

@@ -6,7 +6,7 @@ namespace OldenTop
 {
     public enum Terrain
     {
-        Grassland,
+        Plains,
         Woodland,
         Mountain,
         Water
@@ -43,7 +43,7 @@ namespace OldenTop
         private const float VerticalSpacing = 1.5f * HexRadius;
         private const int RiverSourceCount = 4;
 
-        private static readonly Color32 GrasslandColor = new Color32(174, 194, 104, 255);
+        private static readonly Color32 PlainsColor = new Color32(174, 194, 104, 255);
         private static readonly Color32 WoodlandColor = new Color32(65, 113, 72, 255);
         private static readonly Color32 MountainColor = new Color32(125, 123, 132, 255);
         private static readonly Color32 WaterColor = new Color32(74, 139, 178, 255);
@@ -90,12 +90,12 @@ namespace OldenTop
             BuildRiverObjects();
             FrameMapWithCamera();
 
-            int grassland = CountTerrain(Terrain.Grassland);
+            int plains = CountTerrain(Terrain.Plains);
             int woodland = CountTerrain(Terrain.Woodland);
             int mountain = CountTerrain(Terrain.Mountain);
             int water = CountTerrain(Terrain.Water);
             Debug.Log($"Map spawned (seed {MapSeed}): {Width}x{Height}, " +
-                      $"grassland {grassland}, woodland {woodland}, mountain {mountain}, " +
+                      $"plains {plains}, woodland {woodland}, mountain {mountain}, " +
                       $"water {water}, edge-following river segments {riverEdges.Count}. " +
                       "River edge invariant verified.", this);
         }
@@ -227,7 +227,7 @@ namespace OldenTop
                     int index = ToIndex(column, row);
                     elevation[index] = FractalNoise(column, row, elevationOffsetX, elevationOffsetY, 0.085f);
                     moisture[index] = FractalNoise(column, row, moistureOffsetX, moistureOffsetY, 0.105f);
-                    terrain[index] = Terrain.Grassland;
+                    terrain[index] = Terrain.Plains;
                 }
             }
 
@@ -251,7 +251,7 @@ namespace OldenTop
             List<int> woodlandCandidates = new List<int>();
             for (int i = 0; i < TileCount; i++)
             {
-                if (terrain[i] == Terrain.Grassland)
+                if (terrain[i] == Terrain.Plains)
                 {
                     woodlandCandidates.Add(i);
                 }
@@ -819,7 +819,7 @@ namespace OldenTop
                 case Terrain.Water:
                     return WaterColor;
                 default:
-                    return GrasslandColor;
+                    return PlainsColor;
             }
         }
 

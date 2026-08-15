@@ -6,28 +6,24 @@ namespace OldenTop
 {
     public enum Resource
     {
-        Berries,
-        Hare,
+        Grains,
+        Aurochs,
+        Wood,
         Mushrooms,
-        Timber,
-        Nuts,
-        Deer,
-        Flint,
-        Stone,
-        Salt,
+        Flintstone,
+        Firestone,
         Fish,
-        Reeds,
-        FreshWater
+        Reeds
     }
 
     public static class ResourceCatalog
     {
         private static readonly Resource[][] Options =
         {
-            new[] { Resource.Berries, Resource.Hare, Resource.Mushrooms },
-            new[] { Resource.Timber, Resource.Nuts, Resource.Deer },
-            new[] { Resource.Flint, Resource.Stone, Resource.Salt },
-            new[] { Resource.Fish, Resource.Reeds, Resource.FreshWater }
+            new[] { Resource.Grains, Resource.Aurochs },
+            new[] { Resource.Wood, Resource.Mushrooms },
+            new[] { Resource.Flintstone, Resource.Firestone },
+            new[] { Resource.Fish, Resource.Reeds }
         };
 
         public static Resource[] GetOptions(Terrain terrain)
@@ -51,7 +47,7 @@ namespace OldenTop
 
         public static string GetLabel(Resource resource)
         {
-            return resource == Resource.FreshWater ? "Fresh water" : resource.ToString();
+            return resource.ToString();
         }
     }
 
@@ -75,7 +71,7 @@ namespace OldenTop
 
     public static class ResourceSave
     {
-        private const int CurrentVersion = 1;
+        private const int CurrentVersion = 2;
         private const string LayoutKey = "OldenTop.TileResourceLayout";
 
         [Serializable]
@@ -309,9 +305,8 @@ namespace OldenTop
             {
                 Terrain terrain = (Terrain)terrainIndex;
                 Resource[] options = ResourceCatalog.GetOptions(terrain);
-                string line = $"{terrain}: {ResourceCatalog.GetLabel(options[0])}, " +
-                              $"{ResourceCatalog.GetLabel(options[1])}, " +
-                              ResourceCatalog.GetLabel(options[2]);
+                string[] labels = Array.ConvertAll(options, ResourceCatalog.GetLabel);
+                string line = $"{terrain}: {string.Join(", ", labels)}";
                 GUI.Label(new Rect(x + 8f, y, contentWidth - 8f, 31f), line, smallBodyStyle);
                 y += 31f;
             }
