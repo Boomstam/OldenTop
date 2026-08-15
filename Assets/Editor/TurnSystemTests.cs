@@ -7,14 +7,18 @@ namespace OldenTop.Tests
     {
         private GameObject root;
         private TurnSystem turnSystem;
+        private Camera mapCamera;
 
         [SetUp]
         public void SetUp()
         {
             root = new GameObject("Turn system test");
+            mapCamera = root.AddComponent<Camera>();
+            mapCamera.orthographic = true;
+            mapCamera.orthographicSize = 10f;
             HexMap map = root.AddComponent<HexMap>();
             turnSystem = root.AddComponent<TurnSystem>();
-            turnSystem.Initialize(map);
+            turnSystem.Initialize(map, mapCamera);
         }
 
         [TearDown]
@@ -69,6 +73,34 @@ namespace OldenTop.Tests
                 Is.EqualTo(new[] { Resource.Fish, Resource.Reeds }));
             Assert.That(ResourceCatalog.GetOptions(Terrain.Woodland),
                 Is.EqualTo(new[] { Resource.Wood, Resource.Mushrooms }));
+        }
+
+        [Test]
+        public void ResourceCatalog_AllResourceIconsCanBeLoaded()
+        {
+            foreach (Resource resource in System.Enum.GetValues(typeof(Resource)))
+            {
+                Assert.That(ResourceCatalog.GetIcon(resource), Is.Not.Null,
+                    $"Missing icon at Resources/{ResourceCatalog.GetIconResourcePath(resource)}");
+            }
+        }
+
+        [Test]
+        public void Zoom_ChangesCameraSizeAndClampsToConfiguredRange()
+        {
+            Assert.That(turnSystem.MapResourceIconSize, Is.EqualTo(42f).Within(0.001f));
+
+            turnSystem.AdjustZoom(1f);
+            Assert.That(turnSystem.MapCameraSize, Is.LessThan(10f));
+            Assert.That(turnSystem.MapResourceIconSize, Is.GreaterThan(42f).And.LessThan(84f));
+
+            turnSystem.AdjustZoom(100f);
+            Assert.That(turnSystem.MapCameraSize, Is.EqualTo(turnSystem.MinimumMapCameraSize).Within(0.001f));
+            Assert.That(turnSystem.MapResourceIconSize, Is.EqualTo(84f).Within(0.001f));
+
+            turnSystem.AdjustZoom(-100f);
+            Assert.That(turnSystem.MapCameraSize, Is.EqualTo(turnSystem.MaximumMapCameraSize).Within(0.001f));
+            Assert.That(turnSystem.MapResourceIconSize, Is.EqualTo(42f).Within(0.001f));
         }
     }
 }

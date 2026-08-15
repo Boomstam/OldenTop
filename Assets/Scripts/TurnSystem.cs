@@ -26,6 +26,20 @@ namespace OldenTop
             new[] { Resource.Fish, Resource.Reeds }
         };
 
+        private static readonly string[] IconResourcePaths =
+        {
+            "ResourceIcons/grains",
+            "ResourceIcons/aurochs",
+            "ResourceIcons/wood",
+            "ResourceIcons/mushrooms",
+            "ResourceIcons/flintstone",
+            "ResourceIcons/firestone",
+            "ResourceIcons/fish",
+            "ResourceIcons/reeds"
+        };
+
+        private static readonly Texture2D[] Icons = new Texture2D[IconResourcePaths.Length];
+
         public static Resource[] GetOptions(Terrain terrain)
         {
             return Options[(int)terrain];
@@ -48,6 +62,28 @@ namespace OldenTop
         public static string GetLabel(Resource resource)
         {
             return resource.ToString();
+        }
+
+        public static string GetIconResourcePath(Resource resource)
+        {
+            int index = (int)resource;
+            return index >= 0 && index < IconResourcePaths.Length ? IconResourcePaths[index] : string.Empty;
+        }
+
+        public static Texture2D GetIcon(Resource resource)
+        {
+            int index = (int)resource;
+            if (index < 0 || index >= Icons.Length)
+            {
+                return null;
+            }
+
+            if (Icons[index] == null)
+            {
+                Icons[index] = Resources.Load<Texture2D>(IconResourcePaths[index]);
+            }
+
+            return Icons[index];
         }
     }
 
@@ -196,6 +232,12 @@ namespace OldenTop
         private const int WorkersPerPlayer = 4;
         private const float PanelFraction = 0.25f;
         private const float DragThreshold = 6f;
+        private const float ResourceIconSize = 42f;
+        private const float MaximumZoomedResourceIconScale = 2f;
+        private const float ZoomStepMultiplier = 0.85f;
+        private const float MinimumZoomFraction = 0.35f;
+        private const float MaximumZoomFraction = 1.35f;
+        private const float ScrollZoomSensitivity = 0.25f;
 
         private static readonly string[] SeasonNames = { "Spring", "Summer", "Autumn", "Winter" };
         private static readonly Color[] PlayerColors =
@@ -215,6 +257,7 @@ namespace OldenTop
         private int pressedWorker = -1;
         private int draggingWorker = -1;
         private Vector2 workerPressPosition;
+        private float fittedCameraSize = 1f;
         private bool resolutionPhase;
         private string statusMessage = "Click a worker, then a resource hex — or drag the worker onto the map.";
 
@@ -225,19 +268,44 @@ namespace OldenTop
         private GUIStyle smallBodyStyle;
         private GUIStyle workerStyle;
         private GUIStyle mapWorkerStyle;
-        private GUIStyle tileResourceStyle;
-        private GUIStyle tileResourceShadowStyle;
+        private GUIStyle zoomButtonStyle;
+        private GUIStyle resourceFallbackStyle;
+        private GUIStyle tooltipStyle;
+        private string hoveredResourceLabel;
 
         public int ActivePlayer => activePlayer;
         public int Year => year;
         public string Season => SeasonNames[seasonIndex];
         public bool IsResolutionPhase => resolutionPhase;
         public int SelectedWorker => selectedWorker;
+        public float MapCameraSize => mapCamera != null ? mapCamera.orthographicSize : 0f;
+        public float MinimumMapCameraSize => fittedCameraSize * MinimumZoomFraction;
+        public float MaximumMapCameraSize => fittedCameraSize * MaximumZoomFraction;
+        public float MapResourceIconSize
+        {
+            get
+            {
+                if (mapCamera == null)
+                {
+                    return ResourceIconSize;
+                }
 
-        public void Initialize(HexMap hexMap)
+                float zoomInProgress = Mathf.InverseLerp(fittedCameraSize,
+                    MinimumMapCameraSize, mapCamera.orthographicSize);
+                return Mathf.Lerp(ResourceIconSize,
+                    ResourceIconSize * MaximumZoomedResourceIconScale, zoomInProgress);
+            }
+        }
+
+        public void Initialize(HexMap hexMap, Camera cameraOverride = null)
         {
             map = hexMap;
-            mapCamera = Camera.main != null ? Camera.main : FindFirstObjectByType<Camera>();
+            mapCamera = cameraOverride != null
+                ? cameraOverride
+                : Camera.main != null
+                    ? Camera.main
+                    : FindFirstObjectByType<Camera>();
+            fittedCameraSize = mapCamera != null ? mapCamera.orthographicSize : 1f;
             ClearAssignments();
             ClearWorkerInteraction();
         }
@@ -258,16 +326,20 @@ namespace OldenTop
             }
 
             EnsureStyles();
-            DrawTileResourceLabels();
+            hoveredResourceLabel = null;
+            DrawTileResourceIcons();
             DrawAssignmentsOnMap();
             DrawMapHeader();
             DrawInventoryPanel();
+            HandleZoomInput(Event.current);
             HandlePointerInteraction(Event.current);
 
             if (draggingWorker >= 0)
             {
                 DrawDragGhost(Event.current.mousePosition);
             }
+
+            DrawResourceTooltip(Event.current.mousePosition);
         }
 
         private void DrawInventoryPanel()
@@ -305,10 +377,14 @@ namespace OldenTop
             {
                 Terrain terrain = (Terrain)terrainIndex;
                 Resource[] options = ResourceCatalog.GetOptions(terrain);
-                string[] labels = Array.ConvertAll(options, ResourceCatalog.GetLabel);
-                string line = $"{terrain}: {string.Join(", ", labels)}";
-                GUI.Label(new Rect(x + 8f, y, contentWidth - 8f, 31f), line, smallBodyStyle);
-                y += 31f;
+                GUI.Label(new Rect(x + 8f, y, 86f, 45f), $"{terrain}:", smallBodyStyle);
+                for (int option = 0; option < options.Length; option++)
+                {
+                    DrawResourceIcon(new Rect(x + 94f + option * 49f, y + 1f,
+                        ResourceIconSize, ResourceIconSize), options[option]);
+                }
+
+                y += 46f;
             }
 
             y += 8f;
@@ -457,7 +533,7 @@ namespace OldenTop
             return map.TryGetTileAtWorldPosition(world, out tile);
         }
 
-        private void DrawTileResourceLabels()
+        private void DrawTileResourceIcons()
         {
             if (mapCamera == null)
             {
@@ -465,6 +541,7 @@ namespace OldenTop
             }
 
             Rect mapRect = mapCamera.pixelRect;
+            float iconSize = MapResourceIconSize;
             for (int tile = 0; tile < map.GeneratedTileCount; tile++)
             {
                 Vector3 screen = mapCamera.WorldToScreenPoint(map.GetTileWorldPosition(tile));
@@ -473,12 +550,44 @@ namespace OldenTop
                     continue;
                 }
 
-                string label = ResourceCatalog.GetLabel(map.GetSelectedResource(tile));
-                Rect labelRect = new Rect(screen.x - 31f, Screen.height - screen.y - 9f, 62f, 18f);
-                Rect shadowRect = new Rect(labelRect.x + 1f, labelRect.y + 1f, labelRect.width, labelRect.height);
-                GUI.Label(shadowRect, label, tileResourceShadowStyle);
-                GUI.Label(labelRect, label, tileResourceStyle);
+                Resource resource = map.GetSelectedResource(tile);
+                Rect iconRect = new Rect(screen.x - iconSize * 0.5f,
+                    Screen.height - screen.y - iconSize * 0.5f, iconSize, iconSize);
+                DrawResourceIcon(iconRect, resource);
             }
+        }
+
+        private void DrawResourceIcon(Rect rect, Resource resource)
+        {
+            Texture2D icon = ResourceCatalog.GetIcon(resource);
+            if (icon != null)
+            {
+                GUI.DrawTexture(rect, icon, ScaleMode.ScaleToFit, true);
+            }
+            else
+            {
+                GUI.Label(rect, "?", resourceFallbackStyle);
+            }
+
+            if (rect.Contains(Event.current.mousePosition))
+            {
+                hoveredResourceLabel = ResourceCatalog.GetLabel(resource);
+            }
+        }
+
+        private void DrawResourceTooltip(Vector2 mousePosition)
+        {
+            if (string.IsNullOrEmpty(hoveredResourceLabel))
+            {
+                return;
+            }
+
+            Vector2 size = tooltipStyle.CalcSize(new GUIContent(hoveredResourceLabel));
+            Rect tooltip = new Rect(mousePosition.x + 14f, mousePosition.y + 14f,
+                size.x + 16f, size.y + 8f);
+            tooltip.x = Mathf.Min(tooltip.x, Screen.width - tooltip.width - 4f);
+            tooltip.y = Mathf.Min(tooltip.y, Screen.height - tooltip.height - 4f);
+            GUI.Box(tooltip, hoveredResourceLabel, tooltipStyle);
         }
 
         private void DrawAssignmentsOnMap()
@@ -529,10 +638,55 @@ namespace OldenTop
         private void DrawMapHeader()
         {
             float panelWidth = Screen.width * PanelFraction;
-            Rect header = new Rect(panelWidth + 18f, 16f, Screen.width - panelWidth - 36f, 38f);
+            const float buttonSize = 38f;
+            const float buttonGap = 6f;
+            float controlsWidth = buttonSize * 2f + buttonGap;
+            float controlsX = Screen.width - controlsWidth - 18f;
+            Rect header = new Rect(panelWidth + 18f, 16f,
+                controlsX - panelWidth - 26f, buttonSize);
             GUI.Box(header, resolutionPhase
                 ? "All commitments are visible — advance when ready"
                 : $"Player {activePlayer + 1}: click a worker then a tile, or drag a worker", headingStyle);
+
+            if (GUI.Button(new Rect(controlsX, 16f, buttonSize, buttonSize), "−", zoomButtonStyle))
+            {
+                AdjustZoom(-1f);
+            }
+
+            if (GUI.Button(new Rect(controlsX + buttonSize + buttonGap, 16f, buttonSize, buttonSize),
+                    "+", zoomButtonStyle))
+            {
+                AdjustZoom(1f);
+            }
+        }
+
+        private void HandleZoomInput(Event current)
+        {
+            if (current.type != EventType.ScrollWheel || mapCamera == null)
+            {
+                return;
+            }
+
+            Vector2 screenPoint = new Vector2(current.mousePosition.x, Screen.height - current.mousePosition.y);
+            if (!mapCamera.pixelRect.Contains(screenPoint))
+            {
+                return;
+            }
+
+            AdjustZoom(-current.delta.y * ScrollZoomSensitivity);
+            current.Use();
+        }
+
+        public void AdjustZoom(float steps)
+        {
+            if (mapCamera == null || Mathf.Approximately(steps, 0f))
+            {
+                return;
+            }
+
+            float requestedSize = mapCamera.orthographicSize * Mathf.Pow(ZoomStepMultiplier, steps);
+            mapCamera.orthographicSize = Mathf.Clamp(requestedSize,
+                MinimumMapCameraSize, MaximumMapCameraSize);
         }
 
         private void DrawDragGhost(Vector2 mousePosition)
@@ -722,17 +876,26 @@ namespace OldenTop
                 alignment = TextAnchor.MiddleCenter,
                 normal = { textColor = Color.white }
             };
-            tileResourceStyle = new GUIStyle(GUI.skin.label)
+            zoomButtonStyle = new GUIStyle(GUI.skin.button)
             {
-                fontSize = 8,
+                fontSize = 22,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
-                clipping = TextClipping.Overflow,
+                normal = { textColor = new Color32(238, 231, 210, 255) }
+            };
+            resourceFallbackStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 16,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
                 normal = { textColor = new Color32(248, 245, 226, 255) }
             };
-            tileResourceShadowStyle = new GUIStyle(tileResourceStyle)
+            tooltipStyle = new GUIStyle(GUI.skin.box)
             {
-                normal = { textColor = new Color32(18, 20, 18, 255) }
+                fontSize = 12,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                normal = { textColor = new Color32(238, 231, 210, 255) }
             };
         }
     }
