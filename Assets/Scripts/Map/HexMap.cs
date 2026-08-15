@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace OldenTop.Prototype
+namespace OldenTop
 {
-    public enum PrototypeTerrain
+    public enum Terrain
     {
         Grassland,
         Woodland,
@@ -12,9 +12,9 @@ namespace OldenTop.Prototype
         Water
     }
 
-    internal static class PrototypeMapBootstrap
+    internal static class MapBootstrap
     {
-        private const string RootName = "Prototype Hex Map";
+        private const string RootName = "Hex Map";
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void SpawnMap()
@@ -27,11 +27,13 @@ namespace OldenTop.Prototype
 
             GameObject mapObject = new GameObject(RootName);
             mapObject.hideFlags = HideFlags.DontSave;
-            mapObject.AddComponent<PrototypeHexMap>().Generate();
+            HexMap map = mapObject.AddComponent<HexMap>();
+            map.Generate();
+            mapObject.AddComponent<TurnSystem>().Initialize(map);
         }
     }
 
-    internal sealed class PrototypeHexMap : MonoBehaviour
+    public sealed class HexMap : MonoBehaviour
     {
         private const int Width = 20;
         private const int Height = 20;
@@ -48,7 +50,7 @@ namespace OldenTop.Prototype
         private static readonly Color32 RiverBankColor = new Color32(43, 91, 119, 255);
         private static readonly Color32 RiverColor = new Color32(86, 184, 221, 255);
 
-        private readonly PrototypeTerrain[] terrain = new PrototypeTerrain[TileCount];
+        private readonly Terrain[] terrain = new Terrain[TileCount];
         private readonly float[] elevation = new float[TileCount];
         private readonly float[] moisture = new float[TileCount];
         private readonly Vector2[] centers = new Vector2[TileCount];
@@ -66,15 +68,21 @@ namespace OldenTop.Prototype
         private Sprite circleSprite;
         private Transform tileRoot;
         private Transform riverRoot;
+        private readonly GameObject[] tileObjects = new GameObject[TileCount];
+        private Resource[] selectedResources = new Resource[TileCount];
+
+        public int GeneratedTileCount => TileCount;
+        public int MapSeed { get; private set; }
 
         public void Generate()
         {
-            int seed = unchecked(Environment.TickCount ^ (int)DateTime.UtcNow.Ticks);
-            random = new System.Random(seed);
+            MapSeed = MapSave.GetOrCreateSeed();
+            random = new System.Random(MapSeed);
 
             CreateSharedSprites();
             CalculateCenters();
             GenerateTerrain();
+            selectedResources = ResourceSave.LoadOrCreate(MapSeed, terrain);
             BuildRiverGraph();
             GenerateRivers();
             ValidateRiverEdges();
@@ -82,11 +90,11 @@ namespace OldenTop.Prototype
             BuildRiverObjects();
             FrameMapWithCamera();
 
-            int grassland = CountTerrain(PrototypeTerrain.Grassland);
-            int woodland = CountTerrain(PrototypeTerrain.Woodland);
-            int mountain = CountTerrain(PrototypeTerrain.Mountain);
-            int water = CountTerrain(PrototypeTerrain.Water);
-            Debug.Log($"Prototype map spawned (seed {seed}): {Width}x{Height}, " +
+            int grassland = CountTerrain(Terrain.Grassland);
+            int woodland = CountTerrain(Terrain.Woodland);
+            int mountain = CountTerrain(Terrain.Mountain);
+            int water = CountTerrain(Terrain.Water);
+            Debug.Log($"Map spawned (seed {MapSeed}): {Width}x{Height}, " +
                       $"grassland {grassland}, woodland {woodland}, mountain {mountain}, " +
                       $"water {water}, edge-following river segments {riverEdges.Count}. " +
                       "River edge invariant verified.", this);
@@ -219,7 +227,7 @@ namespace OldenTop.Prototype
                     int index = ToIndex(column, row);
                     elevation[index] = FractalNoise(column, row, elevationOffsetX, elevationOffsetY, 0.085f);
                     moisture[index] = FractalNoise(column, row, moistureOffsetX, moistureOffsetY, 0.105f);
-                    terrain[index] = PrototypeTerrain.Grassland;
+                    terrain[index] = Terrain.Grassland;
                 }
             }
 
@@ -232,18 +240,18 @@ namespace OldenTop.Prototype
 
             for (int i = 0; i < waterCount; i++)
             {
-                terrain[byElevation[i]] = PrototypeTerrain.Water;
+                terrain[byElevation[i]] = Terrain.Water;
             }
 
             for (int i = 0; i < mountainCount; i++)
             {
-                terrain[byElevation[byElevation.Count - 1 - i]] = PrototypeTerrain.Mountain;
+                terrain[byElevation[byElevation.Count - 1 - i]] = Terrain.Mountain;
             }
 
             List<int> woodlandCandidates = new List<int>();
             for (int i = 0; i < TileCount; i++)
             {
-                if (terrain[i] == PrototypeTerrain.Grassland)
+                if (terrain[i] == Terrain.Grassland)
                 {
                     woodlandCandidates.Add(i);
                 }
@@ -252,7 +260,7 @@ namespace OldenTop.Prototype
             woodlandCandidates.Sort((a, b) => WoodlandScore(b).CompareTo(WoodlandScore(a)));
             for (int i = 0; i < woodlandCount; i++)
             {
-                terrain[woodlandCandidates[i]] = PrototypeTerrain.Woodland;
+                terrain[woodlandCandidates[i]] = Terrain.Woodland;
             }
         }
 
@@ -329,7 +337,7 @@ namespace OldenTop.Prototype
             List<int> mountainTiles = new List<int>();
             for (int tile = 0; tile < TileCount; tile++)
             {
-                if (terrain[tile] == PrototypeTerrain.Mountain)
+                if (terrain[tile] == Terrain.Mountain)
                 {
                     mountainTiles.Add(tile);
                 }
@@ -403,7 +411,7 @@ namespace OldenTop.Prototype
             float distanceToWater = float.PositiveInfinity;
             for (int index = 0; index < TileCount; index++)
             {
-                if (terrain[index] == PrototypeTerrain.Water)
+                if (terrain[index] == Terrain.Water)
                 {
                     distanceToWater = Mathf.Min(distanceToWater,
                         Vector2.Distance(centers[source], centers[index]));
@@ -446,7 +454,7 @@ namespace OldenTop.Prototype
             for (int vertex = 0; vertex < riverVertices.Count; vertex++)
             {
                 float distance = Vector2.Distance(riverVertices[sourceVertex], riverVertices[vertex]);
-                if (VertexTouchesTerrain(vertex, PrototypeTerrain.Water) &&
+                if (VertexTouchesTerrain(vertex, Terrain.Water) &&
                     VertexTouchesNonWater(vertex) && distance < shoreDistance)
                 {
                     shoreDistance = distance;
@@ -577,7 +585,7 @@ namespace OldenTop.Prototype
             return total / riverVertexTiles[vertex].Count;
         }
 
-        private bool VertexTouchesTerrain(int vertex, PrototypeTerrain terrainType)
+        private bool VertexTouchesTerrain(int vertex, Terrain terrainType)
         {
             foreach (int tile in riverVertexTiles[vertex])
             {
@@ -594,7 +602,7 @@ namespace OldenTop.Prototype
         {
             foreach (int tile in riverVertexTiles[vertex])
             {
-                if (terrain[tile] != PrototypeTerrain.Water)
+                if (terrain[tile] != Terrain.Water)
                 {
                     return true;
                 }
@@ -605,7 +613,7 @@ namespace OldenTop.Prototype
 
         private bool VertexTouchesOnlyWater(int vertex)
         {
-            return VertexTouchesTerrain(vertex, PrototypeTerrain.Water) && !VertexTouchesNonWater(vertex);
+            return VertexTouchesTerrain(vertex, Terrain.Water) && !VertexTouchesNonWater(vertex);
         }
 
         private void ValidateRiverEdges()
@@ -637,7 +645,9 @@ namespace OldenTop.Prototype
                 for (int column = 0; column < Width; column++)
                 {
                     int index = ToIndex(column, row);
-                    GameObject tileObject = new GameObject($"Hex {column:00},{row:00} - {terrain[index]}");
+                    GameObject tileObject = new GameObject($"Hex {column:00},{row:00} - {terrain[index]} - " +
+                                                           ResourceCatalog.GetLabel(selectedResources[index]));
+                    tileObjects[index] = tileObject;
                     tileObject.transform.SetParent(tileRoot, false);
                     tileObject.transform.localPosition = centers[index];
                     tileObject.transform.localScale = new Vector3(0.982f, 0.982f, 1f);
@@ -724,7 +734,8 @@ namespace OldenTop.Prototype
             Vector2 center = (minimum + maximum) * 0.5f;
             float mapWidth = maximum.x - minimum.x + HorizontalSpacing;
             float mapHeight = maximum.y - minimum.y + HexRadius * 2f;
-            float aspect = Screen.height > 0 ? (float)Screen.width / Screen.height : 16f / 9f;
+            camera.rect = new Rect(0.25f, 0f, 0.75f, 1f);
+            float aspect = camera.aspect > 0f ? camera.aspect : 16f / 9f;
 
             camera.orthographic = true;
             camera.orthographicSize = Mathf.Max(mapHeight * 0.5f + 0.55f, (mapWidth * 0.5f + 0.55f) / aspect);
@@ -736,7 +747,54 @@ namespace OldenTop.Prototype
             camera.farClipPlane = 100f;
         }
 
-        private int CountTerrain(PrototypeTerrain value)
+        public bool TryGetTileAtWorldPosition(Vector2 worldPosition, out int tileIndex)
+        {
+            float bestDistance = float.PositiveInfinity;
+            int nearest = -1;
+
+            for (int i = 0; i < centers.Length; i++)
+            {
+                float distance = (worldPosition - centers[i]).sqrMagnitude;
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    nearest = i;
+                }
+            }
+
+            if (nearest >= 0)
+            {
+                Vector2 local = worldPosition - centers[nearest];
+                float absX = Mathf.Abs(local.x);
+                float absY = Mathf.Abs(local.y);
+                if (absY <= HexRadius && absX <= HexRadius * 0.8660254f &&
+                    absX / 1.7320508f + absY <= HexRadius)
+                {
+                    tileIndex = nearest;
+                    return true;
+                }
+            }
+
+            tileIndex = -1;
+            return false;
+        }
+
+        public Vector2 GetTileWorldPosition(int tileIndex)
+        {
+            return centers[Mathf.Clamp(tileIndex, 0, centers.Length - 1)];
+        }
+
+        public Terrain GetTerrain(int tileIndex)
+        {
+            return terrain[Mathf.Clamp(tileIndex, 0, terrain.Length - 1)];
+        }
+
+        public Resource GetSelectedResource(int tileIndex)
+        {
+            return selectedResources[Mathf.Clamp(tileIndex, 0, selectedResources.Length - 1)];
+        }
+
+        private int CountTerrain(Terrain value)
         {
             int count = 0;
             for (int i = 0; i < terrain.Length; i++)
@@ -750,15 +808,15 @@ namespace OldenTop.Prototype
             return count;
         }
 
-        private static Color32 GetTerrainColor(PrototypeTerrain value)
+        private static Color32 GetTerrainColor(Terrain value)
         {
             switch (value)
             {
-                case PrototypeTerrain.Woodland:
+                case Terrain.Woodland:
                     return WoodlandColor;
-                case PrototypeTerrain.Mountain:
+                case Terrain.Mountain:
                     return MountainColor;
-                case PrototypeTerrain.Water:
+                case Terrain.Water:
                     return WaterColor;
                 default:
                     return GrasslandColor;

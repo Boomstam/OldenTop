@@ -76,8 +76,8 @@
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Editor.Selection.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Data/GetComponentResponse.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/Utils/ScriptUtils.cs" />
-    <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Tests.Run.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/Extensions/ExtensionsSerializedMember.cs" />
+    <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Tests.Run.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/Utils/BuiltInAssetCache.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Package.List.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/UI/Window/McpResourcesWindow.cs" />
@@ -109,8 +109,8 @@
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/GameObject.Create.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/SystemTool/Skills.Generate.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Editor.Application.SetState.cs" />
-    <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Scene.GetData.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Assets.Shader.GetData.cs" />
+    <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Scene.GetData.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Scene.SetActive.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Data/ShaderMessageData.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/UI/Window/MainWindowEditor.McpFeatures.cs" />
@@ -119,8 +119,8 @@
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Scene.Save.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/GameObject.SetParent.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/GameObject.Component.Modify.cs" />
-    <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Assets.Prefab.Close.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Data/CopyAssetsResponse.cs" />
+    <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Assets.Prefab.Close.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Console.ClearLogs.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Assets.Prefab.Open.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Profiler.Start.cs" />
@@ -159,8 +159,8 @@
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Data/ToolInfoData.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/GameObject.Component.Destroy.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Profiler.CaptureFrame.cs" />
-    <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Screenshot.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Profiler.ListModules.cs" />
+    <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Screenshot.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Data/PackageSearchResult.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Assets.Copy.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Assets.Prefab.Instantiate.cs" />
@@ -244,8 +244,8 @@
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Tests/TestResultCollector.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Assets.Material.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Reflection.MethodCall.cs" />
-    <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/UI/Window/MainWindowEditor.Extensions.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Tool.cs" />
+    <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/UI/Window/MainWindowEditor.Extensions.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Tests/TestLogEntry.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/Utils/EditorUtils.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Editor/Scripts/API/Tool/Data/ModifyComponentResponse.cs" />

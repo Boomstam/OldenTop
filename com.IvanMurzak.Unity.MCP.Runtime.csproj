@@ -141,8 +141,8 @@
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Runtime/Converter/Reflection/Base/UnityGenericReflectionConverter.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Runtime/Converter/Reflection/Component/Impl/UnityEngine_Renderer_ReflectionConverter.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Runtime/Logger/UnityLogger.cs" />
-    <Compile Include="Packages/com.ivanmurzak.unity.mcp/Runtime/Converter/Json/Structures/GradientAlphaKeyConverter.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Runtime/Converter/Reflection/UnityEngine_Material_ReflectionConverter.Editor.cs" />
+    <Compile Include="Packages/com.ivanmurzak.unity.mcp/Runtime/Converter/Json/Structures/GradientAlphaKeyConverter.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Runtime/UnityMcpPluginBuilder.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Runtime/Extensions/ExtensionsRuntimeAssetObjectRef.pre-Unity.6.5.cs" />
     <Compile Include="Packages/com.ivanmurzak.unity.mcp/Runtime/Converter/Json/Structures/Vector4Converter.cs" />
