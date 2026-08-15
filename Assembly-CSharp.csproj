@@ -51,6 +51,7 @@
   <ItemGroup>
     <Compile Include="Assets/Scripts/Map/HexMap.cs" />
     <Compile Include="Assets/Scripts/TurnSystem.cs" />
+    <Compile Include="Assets/Scripts/GameInitializer.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="UnityEngine">

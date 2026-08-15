@@ -12,27 +12,6 @@ namespace OldenTop
         Water
     }
 
-    internal static class MapBootstrap
-    {
-        private const string RootName = "Hex Map";
-
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        private static void SpawnMap()
-        {
-            GameObject previousMap = GameObject.Find(RootName);
-            if (previousMap != null)
-            {
-                UnityEngine.Object.Destroy(previousMap);
-            }
-
-            GameObject mapObject = new GameObject(RootName);
-            mapObject.hideFlags = HideFlags.DontSave;
-            HexMap map = mapObject.AddComponent<HexMap>();
-            map.Generate();
-            mapObject.AddComponent<TurnSystem>().Initialize(map);
-        }
-    }
-
     public sealed class HexMap : MonoBehaviour
     {
         private const int Width = 20;
@@ -72,12 +51,12 @@ namespace OldenTop
         private Resource[] selectedResources = new Resource[TileCount];
 
         public int GeneratedTileCount => TileCount;
-        public int MapSeed { get; private set; }
+        public string MapSeed { get; private set; }
 
-        public void Generate()
+        public void Generate(string seed)
         {
-            MapSeed = MapSave.GetOrCreateSeed();
-            random = new System.Random(MapSeed);
+            MapSeed = seed ?? string.Empty;
+            random = new System.Random(MapSeedUtility.ToInt32(MapSeed));
 
             CreateSharedSprites();
             CalculateCenters();
@@ -94,7 +73,7 @@ namespace OldenTop
             int woodland = CountTerrain(Terrain.Woodland);
             int mountain = CountTerrain(Terrain.Mountain);
             int water = CountTerrain(Terrain.Water);
-            Debug.Log($"Map spawned (seed {MapSeed}): {Width}x{Height}, " +
+            Debug.Log($"Map spawned (seed \"{MapSeed}\"): {Width}x{Height}, " +
                       $"plains {plains}, woodland {woodland}, mountain {mountain}, " +
                       $"water {water}, edge-following river segments {riverEdges.Count}. " +
                       "River edge invariant verified.", this);

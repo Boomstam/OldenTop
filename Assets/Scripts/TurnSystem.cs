@@ -87,38 +87,79 @@ namespace OldenTop
         }
     }
 
-    public static class MapSave
+    public static class WorkerIconCatalog
     {
-        private const string SeedKey = "OldenTop.MapSeed";
-
-        public static int GetOrCreateSeed()
+        private static readonly string[] IconResourcePaths =
         {
-            if (PlayerPrefs.HasKey(SeedKey))
+            "WorkerIcons/player-1",
+            "WorkerIcons/player-2"
+        };
+
+        private static readonly Texture2D[] Icons = new Texture2D[IconResourcePaths.Length];
+
+        public static string GetIconResourcePath(int player)
+        {
+            return player >= 0 && player < IconResourcePaths.Length
+                ? IconResourcePaths[player]
+                : string.Empty;
+        }
+
+        public static Texture2D GetIcon(int player)
+        {
+            if (player < 0 || player >= Icons.Length)
             {
-                return PlayerPrefs.GetInt(SeedKey);
+                return null;
             }
 
-            int seed = unchecked(Environment.TickCount ^ (int)DateTime.UtcNow.Ticks);
-            PlayerPrefs.SetInt(SeedKey, seed);
-            PlayerPrefs.Save();
-            return seed;
+            if (Icons[player] == null)
+            {
+                Icons[player] = Resources.Load<Texture2D>(IconResourcePaths[player]);
+            }
+
+            return Icons[player];
+        }
+    }
+
+    public static class MapSeedUtility
+    {
+        public static int ToInt32(string seed)
+        {
+            string value = seed ?? string.Empty;
+            if (int.TryParse(value, out int numericSeed))
+            {
+                return numericSeed;
+            }
+
+            unchecked
+            {
+                const uint offsetBasis = 2166136261;
+                const uint prime = 16777619;
+                uint hash = offsetBasis;
+                for (int i = 0; i < value.Length; i++)
+                {
+                    hash ^= value[i];
+                    hash *= prime;
+                }
+
+                return (int)hash;
+            }
         }
     }
 
     public static class ResourceSave
     {
-        private const int CurrentVersion = 2;
+        private const int CurrentVersion = 3;
         private const string LayoutKey = "OldenTop.TileResourceLayout";
 
         [Serializable]
         private sealed class TileResourceLayout
         {
             public int version;
-            public int mapSeed;
+            public string mapSeed;
             public int[] resources;
         }
 
-        public static Resource[] LoadOrCreate(int mapSeed, Terrain[] terrain)
+        public static Resource[] LoadOrCreate(string mapSeed, Terrain[] terrain)
         {
             if (TryLoad(mapSeed, terrain, out Resource[] choices))
             {
@@ -130,7 +171,7 @@ namespace OldenTop
             return choices;
         }
 
-        public static bool TryLoad(int mapSeed, Terrain[] terrain, out Resource[] choices)
+        public static bool TryLoad(string mapSeed, Terrain[] terrain, out Resource[] choices)
         {
             choices = null;
             string json = PlayerPrefs.GetString(LayoutKey, string.Empty);
@@ -149,7 +190,8 @@ namespace OldenTop
                 return false;
             }
 
-            if (data == null || data.version != CurrentVersion || data.mapSeed != mapSeed ||
+            if (data == null || data.version != CurrentVersion ||
+                !string.Equals(data.mapSeed, mapSeed, StringComparison.Ordinal) ||
                 data.resources == null || data.resources.Length != terrain.Length)
             {
                 return false;
@@ -172,10 +214,11 @@ namespace OldenTop
             return true;
         }
 
-        private static Resource[] CreateBalancedLayout(int mapSeed, Terrain[] terrain)
+        private static Resource[] CreateBalancedLayout(string mapSeed, Terrain[] terrain)
         {
             Resource[] choices = new Resource[terrain.Length];
-            System.Random resourceRandom = new System.Random(unchecked(mapSeed ^ 0x5A17C9E3));
+            int numericSeed = MapSeedUtility.ToInt32(mapSeed);
+            System.Random resourceRandom = new System.Random(unchecked(numericSeed ^ 0x5A17C9E3));
 
             for (int terrainIndex = 0; terrainIndex < 4; terrainIndex++)
             {
@@ -207,7 +250,7 @@ namespace OldenTop
             return choices;
         }
 
-        private static void Save(int mapSeed, Resource[] choices)
+        private static void Save(string mapSeed, Resource[] choices)
         {
             int[] resourceIds = new int[choices.Length];
             for (int i = 0; i < choices.Length; i++)
@@ -233,6 +276,9 @@ namespace OldenTop
         private const float PanelFraction = 0.25f;
         private const float DragThreshold = 6f;
         private const float ResourceIconSize = 42f;
+        private const float InventoryWorkerIconSize = 48f;
+        private const float MapWorkerIconSize = 36f;
+        private const float SelectedMapWorkerIconSize = 44f;
         private const float MaximumZoomedResourceIconScale = 2f;
         private const float ZoomStepMultiplier = 0.85f;
         private const float MinimumZoomFraction = 0.35f;
@@ -267,11 +313,11 @@ namespace OldenTop
         private GUIStyle bodyStyle;
         private GUIStyle smallBodyStyle;
         private GUIStyle workerStyle;
-        private GUIStyle mapWorkerStyle;
+        private GUIStyle workerBadgeStyle;
         private GUIStyle zoomButtonStyle;
         private GUIStyle resourceFallbackStyle;
         private GUIStyle tooltipStyle;
-        private string hoveredResourceLabel;
+        private string hoveredTooltip;
 
         public int ActivePlayer => activePlayer;
         public int Year => year;
@@ -326,7 +372,7 @@ namespace OldenTop
             }
 
             EnsureStyles();
-            hoveredResourceLabel = null;
+            hoveredTooltip = null;
             DrawTileResourceIcons();
             DrawAssignmentsOnMap();
             DrawMapHeader();
@@ -339,7 +385,7 @@ namespace OldenTop
                 DrawDragGhost(Event.current.mousePosition);
             }
 
-            DrawResourceTooltip(Event.current.mousePosition);
+            DrawTooltip(Event.current.mousePosition);
         }
 
         private void DrawInventoryPanel()
@@ -395,9 +441,14 @@ namespace OldenTop
             {
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
-                    DrawWorkerCard(new Rect(x, y, contentWidth, 42f), worker);
-                    y += 48f;
+                    int column = worker % 2;
+                    int row = worker / 2;
+                    DrawWorkerCard(new Rect(x + column * (InventoryWorkerIconSize + 10f),
+                        y + row * (InventoryWorkerIconSize + 8f),
+                        InventoryWorkerIconSize, InventoryWorkerIconSize), worker);
                 }
+
+                y += InventoryWorkerIconSize * 2f + 16f;
 
                 if (GUI.Button(new Rect(x, Screen.height - 94f, contentWidth, 30f), "Recall this player's workers"))
                 {
@@ -431,13 +482,6 @@ namespace OldenTop
         {
             bool assigned = assignments[activePlayer, worker] >= 0;
             bool selected = selectedWorker == worker;
-            string label = assigned
-                ? $"Worker {worker + 1}  •  assigned"
-                : $"Worker {worker + 1}  •  available";
-            if (selected)
-            {
-                label += "  •  SELECTED";
-            }
 
             Color previousBackground = GUI.backgroundColor;
             GUI.backgroundColor = selected
@@ -445,8 +489,11 @@ namespace OldenTop
                 : assigned
                     ? new Color(0.62f, 0.62f, 0.62f, 1f)
                     : PlayerColors[activePlayer];
-            GUI.Box(rect, label, workerStyle);
+            GUI.Box(rect, GUIContent.none, workerStyle);
             GUI.backgroundColor = previousBackground;
+            DrawWorkerIcon(new Rect(rect.x + 3f, rect.y + 3f, rect.width - 6f, rect.height - 6f),
+                activePlayer, worker, assigned,
+                assigned ? "assigned" : "available");
 
             Event current = Event.current;
             if (current.type == EventType.MouseDown && current.button == 0 && rect.Contains(current.mousePosition))
@@ -571,23 +618,23 @@ namespace OldenTop
 
             if (rect.Contains(Event.current.mousePosition))
             {
-                hoveredResourceLabel = ResourceCatalog.GetLabel(resource);
+                hoveredTooltip = ResourceCatalog.GetLabel(resource);
             }
         }
 
-        private void DrawResourceTooltip(Vector2 mousePosition)
+        private void DrawTooltip(Vector2 mousePosition)
         {
-            if (string.IsNullOrEmpty(hoveredResourceLabel))
+            if (string.IsNullOrEmpty(hoveredTooltip))
             {
                 return;
             }
 
-            Vector2 size = tooltipStyle.CalcSize(new GUIContent(hoveredResourceLabel));
+            Vector2 size = tooltipStyle.CalcSize(new GUIContent(hoveredTooltip));
             Rect tooltip = new Rect(mousePosition.x + 14f, mousePosition.y + 14f,
                 size.x + 16f, size.y + 8f);
             tooltip.x = Mathf.Min(tooltip.x, Screen.width - tooltip.width - 4f);
             tooltip.y = Mathf.Min(tooltip.y, Screen.height - tooltip.height - 4f);
-            GUI.Box(tooltip, hoveredResourceLabel, tooltipStyle);
+            GUI.Box(tooltip, hoveredTooltip, tooltipStyle);
         }
 
         private void DrawAssignmentsOnMap()
@@ -615,15 +662,11 @@ namespace OldenTop
                     }
 
                     bool selected = player == activePlayer && worker == selectedWorker;
-                    float markerSize = selected ? 34f : 28f;
+                    float zoomScale = MapResourceIconSize / ResourceIconSize;
+                    float markerSize = (selected ? SelectedMapWorkerIconSize : MapWorkerIconSize) * zoomScale;
                     Rect marker = new Rect(screen.x - markerSize * 0.5f,
                         Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
-                    Color previousBackground = GUI.backgroundColor;
-                    GUI.backgroundColor = selected
-                        ? Color.Lerp(PlayerColors[player], Color.white, 0.35f)
-                        : PlayerColors[player];
-                    GUI.Box(marker, selected ? $"*{player + 1}.{worker + 1}" : $"{player + 1}.{worker + 1}", mapWorkerStyle);
-                    GUI.backgroundColor = previousBackground;
+                    DrawWorkerIcon(marker, player, worker, false, "placed");
 
                     Event current = Event.current;
                     if (!resolutionPhase && player == activePlayer && current.type == EventType.MouseDown &&
@@ -691,11 +734,39 @@ namespace OldenTop
 
         private void DrawDragGhost(Vector2 mousePosition)
         {
-            Rect ghost = new Rect(mousePosition.x - 48f, mousePosition.y - 18f, 96f, 36f);
-            Color previousBackground = GUI.backgroundColor;
-            GUI.backgroundColor = PlayerColors[activePlayer];
-            GUI.Box(ghost, $"Worker {draggingWorker + 1}", workerStyle);
-            GUI.backgroundColor = previousBackground;
+            const float size = 52f;
+            Rect ghost = new Rect(mousePosition.x - size * 0.5f, mousePosition.y - size * 0.5f, size, size);
+            DrawWorkerIcon(ghost, activePlayer, draggingWorker, false, "dragging");
+        }
+
+        private void DrawWorkerIcon(Rect rect, int player, int worker, bool dimmed, string state)
+        {
+            Color previousColor = GUI.color;
+            if (dimmed)
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.48f);
+            }
+
+            Texture2D icon = WorkerIconCatalog.GetIcon(player);
+            if (icon != null)
+            {
+                GUI.DrawTexture(rect, icon, ScaleMode.ScaleToFit, true);
+            }
+            else
+            {
+                GUI.Label(rect, "?", resourceFallbackStyle);
+            }
+
+            GUI.color = previousColor;
+
+            float badgeSize = Mathf.Clamp(rect.width * 0.38f, 15f, 22f);
+            Rect badge = new Rect(rect.xMax - badgeSize, rect.yMax - badgeSize, badgeSize, badgeSize);
+            GUI.Box(badge, (worker + 1).ToString(), workerBadgeStyle);
+
+            if (rect.Contains(Event.current.mousePosition))
+            {
+                hoveredTooltip = $"Player {player + 1} • Worker {worker + 1} • {state}";
+            }
         }
 
         public bool TryAssignActiveWorker(int worker, int tile)
@@ -869,12 +940,12 @@ namespace OldenTop
                 alignment = TextAnchor.MiddleCenter,
                 normal = { textColor = Color.white }
             };
-            mapWorkerStyle = new GUIStyle(GUI.skin.button)
+            workerBadgeStyle = new GUIStyle(GUI.skin.box)
             {
-                fontSize = 10,
+                fontSize = 11,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
-                normal = { textColor = Color.white }
+                normal = { textColor = new Color32(238, 231, 210, 255) }
             };
             zoomButtonStyle = new GUIStyle(GUI.skin.button)
             {

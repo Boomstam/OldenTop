@@ -28,6 +28,18 @@ namespace OldenTop.Tests
         }
 
         [Test]
+        public void MapSeedUtility_NumericTextPreservesLegacySeed()
+        {
+            Assert.That(MapSeedUtility.ToInt32("1375840081"), Is.EqualTo(1375840081));
+        }
+
+        [Test]
+        public void MapSeedUtility_TextSeedIsStable()
+        {
+            Assert.That(MapSeedUtility.ToInt32("Olden Top"), Is.EqualTo(679649534));
+        }
+
+        [Test]
         public void SelectedWorker_CanBePlacedAndMovedToAnotherTile()
         {
             Assert.That(turnSystem.SelectActiveWorker(1), Is.True);
@@ -82,6 +94,16 @@ namespace OldenTop.Tests
             {
                 Assert.That(ResourceCatalog.GetIcon(resource), Is.Not.Null,
                     $"Missing icon at Resources/{ResourceCatalog.GetIconResourcePath(resource)}");
+            }
+        }
+
+        [Test]
+        public void WorkerIconCatalog_AllPlayerIconsCanBeLoaded()
+        {
+            for (int player = 0; player < 2; player++)
+            {
+                Assert.That(WorkerIconCatalog.GetIcon(player), Is.Not.Null,
+                    $"Missing icon at Resources/{WorkerIconCatalog.GetIconResourcePath(player)}");
             }
         }
 
