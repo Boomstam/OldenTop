@@ -313,7 +313,9 @@ namespace OldenTop
         };
 
         private readonly int[,] assignments = new int[PlayerCount, WorkersPerPlayer];
+        private readonly int[,] assignmentSlots = new int[PlayerCount, WorkersPerPlayer];
         private readonly int[,] turnStartTiles = new int[PlayerCount, WorkersPerPlayer];
+        private readonly int[,] turnStartSlots = new int[PlayerCount, WorkersPerPlayer];
         private readonly bool[,] workerPlacedThisTurn = new bool[PlayerCount, WorkersPerPlayer];
         private readonly bool[] completedFirstTurn = new bool[PlayerCount];
         private readonly int[] hearthTiles = { -1, -1 };
@@ -342,12 +344,10 @@ namespace OldenTop
         private GUIStyle headingStyle;
         private GUIStyle bodyStyle;
         private GUIStyle smallBodyStyle;
-        private GUIStyle workerStyle;
-        private GUIStyle workerBadgeStyle;
         private GUIStyle zoomButtonStyle;
         private GUIStyle resourceFallbackStyle;
         private GUIStyle tooltipStyle;
-        private Texture2D ownershipRingTexture;
+        private Texture2D iconOutlineTexture;
         private string hoveredTooltip;
 
         public int ActivePlayer => activePlayer;
@@ -426,6 +426,7 @@ namespace OldenTop
             hoveredTooltip = null;
             DrawTileResourceIcons();
             DrawHearthsOnMap();
+            DrawPlacementSlotsOnMap();
             DrawAssignmentsOnMap();
             DrawMapHeader();
             DrawInventoryPanel();
@@ -549,16 +550,10 @@ namespace OldenTop
             bool placedThisTurn = workerPlacedThisTurn[activePlayer, worker];
             bool selected = selectedWorker == worker;
 
-            Color previousBackground = GUI.backgroundColor;
-            GUI.backgroundColor = selected
-                ? Color.Lerp(PlayerColors[activePlayer], Color.white, 0.3f)
-                : placedThisTurn
-                    ? new Color(0.62f, 0.62f, 0.62f, 1f)
-                    : PlayerColors[activePlayer];
-            GUI.Box(rect, GUIContent.none, workerStyle);
-            GUI.backgroundColor = previousBackground;
-            DrawWorkerIcon(new Rect(rect.x + 3f, rect.y + 3f, rect.width - 6f, rect.height - 6f),
-                activePlayer, worker, placedThisTurn,
+            float selectionExpansion = selected ? 3f : 0f;
+            Rect iconRect = new Rect(rect.x - selectionExpansion, rect.y - selectionExpansion,
+                rect.width + selectionExpansion * 2f, rect.height + selectionExpansion * 2f);
+            DrawWorkerIcon(iconRect, activePlayer, placedThisTurn,
                 placedThisTurn ? "placed this turn" : "ready to move");
 
             Event current = Event.current;
@@ -607,7 +602,7 @@ namespace OldenTop
                 Vector2.Distance(workerPressPosition, current.mousePosition) >= DragThreshold)
             {
                 draggingWorker = pressedWorker;
-                statusMessage = $"Drop Worker {draggingWorker + 1} on a highlighted hex, or off the map to cancel their move.";
+                statusMessage = "Drop the worker onto an available slot, or elsewhere to cancel the move.";
                 current.Use();
                 return;
             }
@@ -615,9 +610,9 @@ namespace OldenTop
             if (current.type == EventType.MouseUp && current.button == 0 && draggingWorker >= 0)
             {
                 int worker = draggingWorker;
-                if (TryGetTileAtGuiPosition(current.mousePosition, out int tile))
+                if (TryGetPlacementSlotAtGuiPosition(current.mousePosition, out int tile, out int slot))
                 {
-                    TryAssignActiveWorker(worker, tile);
+                    TryAssignActiveWorker(worker, tile, slot);
                 }
                 else
                 {
@@ -637,9 +632,9 @@ namespace OldenTop
             }
 
             if (current.type == EventType.MouseDown && current.button == 0 && selectedWorker >= 0 &&
-                TryGetTileAtGuiPosition(current.mousePosition, out int clickedTile))
+                TryGetPlacementSlotAtGuiPosition(current.mousePosition, out int clickedTile, out int clickedSlot))
             {
-                TryAssignActiveWorker(selectedWorker, clickedTile);
+                TryAssignActiveWorker(selectedWorker, clickedTile, clickedSlot);
                 current.Use();
             }
         }
@@ -726,6 +721,74 @@ namespace OldenTop
             GUI.Box(tooltip, hoveredTooltip, tooltipStyle);
         }
 
+        private void DrawPlacementSlotsOnMap()
+        {
+            if (mapCamera == null || selectedWorker < 0 || resolutionPhase || IsPlacingHearth)
+            {
+                return;
+            }
+
+            Color previousColor = GUI.color;
+            GUI.color = new Color(0.28f, 0.28f, 0.28f, 0.38f);
+            for (int tileIndex = 0; tileIndex < highlightedTiles.Count; tileIndex++)
+            {
+                int tile = highlightedTiles[tileIndex];
+                for (int slot = 0; slot < TileContentSlotCount; slot++)
+                {
+                    if (IsTileSlotOccupied(tile, slot))
+                    {
+                        continue;
+                    }
+
+                    Rect slotRect = GetPlacementSlotGuiRect(tile, slot);
+                    GUI.DrawTexture(slotRect, iconOutlineTexture, ScaleMode.ScaleToFit, true);
+                    if (slotRect.Contains(Event.current.mousePosition))
+                    {
+                        hoveredTooltip = "Available worker slot";
+                    }
+                }
+            }
+
+            GUI.color = previousColor;
+        }
+
+        private bool TryGetPlacementSlotAtGuiPosition(Vector2 guiPoint, out int tile, out int slot)
+        {
+            tile = -1;
+            slot = -1;
+            if (selectedWorker < 0 || resolutionPhase || IsPlacingHearth)
+            {
+                return false;
+            }
+
+            for (int tileIndex = 0; tileIndex < highlightedTiles.Count; tileIndex++)
+            {
+                int candidateTile = highlightedTiles[tileIndex];
+                for (int candidateSlot = 0; candidateSlot < TileContentSlotCount; candidateSlot++)
+                {
+                    if (IsTileSlotOccupied(candidateTile, candidateSlot) ||
+                        !GetPlacementSlotGuiRect(candidateTile, candidateSlot).Contains(guiPoint))
+                    {
+                        continue;
+                    }
+
+                    tile = candidateTile;
+                    slot = candidateSlot;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private Rect GetPlacementSlotGuiRect(int tile, int slot)
+        {
+            Vector3 screen = GetWorkerSlotScreenPosition(tile, slot);
+            float markerSize = MapWorkerIconSize * OccupiedTileIconScale;
+            return new Rect(screen.x - markerSize * 0.5f,
+                Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
+        }
+
         private void DrawAssignmentsOnMap()
         {
             if (mapCamera == null)
@@ -752,7 +815,7 @@ namespace OldenTop
                             continue;
                         }
 
-                        int slot = GetWorkerTileSlot(player, worker, tile);
+                        int slot = assignmentSlots[player, worker];
                         if (slot < 0 || slot >= TileContentSlotCount)
                         {
                             continue;
@@ -768,7 +831,7 @@ namespace OldenTop
                                            OccupiedTileIconScale;
                         Rect marker = new Rect(screen.x - markerSize * 0.5f,
                             Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
-                        DrawWorkerIcon(marker, player, worker, false, "placed");
+                        DrawWorkerIcon(marker, player, false, "placed");
 
                         Event current = Event.current;
                         if (!resolutionPhase && player == activePlayer && current.type == EventType.MouseDown &&
@@ -834,7 +897,7 @@ namespace OldenTop
 
                 Rect marker = new Rect(screen.x - markerSize * 0.5f,
                     Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
-                DrawOwnershipRing(marker, player);
+                DrawIconOutline(marker);
                 Texture2D hearthIcon = HearthIconCatalog.GetIcon();
                 if (hearthIcon != null)
                 {
@@ -913,12 +976,12 @@ namespace OldenTop
         {
             const float size = 52f;
             Rect ghost = new Rect(mousePosition.x - size * 0.5f, mousePosition.y - size * 0.5f, size, size);
-            DrawWorkerIcon(ghost, activePlayer, draggingWorker, false, "dragging");
+            DrawWorkerIcon(ghost, activePlayer, false, "dragging");
         }
 
-        private void DrawWorkerIcon(Rect rect, int player, int worker, bool dimmed, string state)
+        private void DrawWorkerIcon(Rect rect, int player, bool dimmed, string state)
         {
-            DrawOwnershipRing(rect, player, dimmed);
+            DrawIconOutline(rect, dimmed);
             Color previousColor = GUI.color;
             if (dimmed)
             {
@@ -937,19 +1000,15 @@ namespace OldenTop
 
             GUI.color = previousColor;
 
-            float badgeSize = Mathf.Clamp(rect.width * 0.38f, 15f, 22f);
-            Rect badge = new Rect(rect.xMax - badgeSize, rect.yMax - badgeSize, badgeSize, badgeSize);
-            GUI.Box(badge, (worker + 1).ToString(), workerBadgeStyle);
-
             if (rect.Contains(Event.current.mousePosition))
             {
-                hoveredTooltip = $"Player {player + 1} • Worker {worker + 1} • {state}";
+                hoveredTooltip = $"Player {player + 1} • Worker • {state}";
             }
         }
 
-        private void DrawOwnershipRing(Rect iconRect, int player, bool dimmed = false)
+        private void DrawIconOutline(Rect iconRect, bool dimmed = false)
         {
-            if (ownershipRingTexture == null || player < 0 || player >= PlayerColors.Length)
+            if (iconOutlineTexture == null)
             {
                 return;
             }
@@ -958,17 +1017,24 @@ namespace OldenTop
             Rect ringRect = new Rect(iconRect.x - padding, iconRect.y - padding,
                 iconRect.width + padding * 2f, iconRect.height + padding * 2f);
             Color previousColor = GUI.color;
-            Color playerColor = PlayerColors[player];
-            playerColor.a = dimmed ? 0.48f : 1f;
-            GUI.color = playerColor;
-            GUI.DrawTexture(ringRect, ownershipRingTexture, ScaleMode.ScaleToFit, true);
+            GUI.color = dimmed
+                ? new Color(0f, 0f, 0f, 0.12f)
+                : new Color(0f, 0f, 0f, 0.25f);
+            GUI.DrawTexture(ringRect, iconOutlineTexture, ScaleMode.ScaleToFit, true);
             GUI.color = previousColor;
         }
 
         public bool TryAssignActiveWorker(int worker, int tile)
         {
+            int slot = FindFirstAvailableTileSlot(tile);
+            return slot >= 0 && TryAssignActiveWorker(worker, tile, slot);
+        }
+
+        public bool TryAssignActiveWorker(int worker, int tile, int slot)
+        {
             if (resolutionPhase || map == null || worker < 0 || worker >= WorkersPerPlayer ||
-                tile < 0 || tile >= map.GeneratedTileCount || IsPlacingHearth)
+                tile < 0 || tile >= map.GeneratedTileCount ||
+                slot < 0 || slot >= TileContentSlotCount || IsPlacingHearth)
             {
                 return false;
             }
@@ -987,29 +1053,30 @@ namespace OldenTop
                 return false;
             }
 
-            if (!HasAvailableTileSlotForWorker(tile, worker))
+            if (IsTileSlotOccupied(tile, slot))
             {
-                statusMessage = "That hex already uses all six content slots.";
+                statusMessage = "That slot is already occupied.";
                 return false;
             }
 
             int previousTile = assignments[activePlayer, worker];
             bool firstPlacementThisTurn = !workerPlacedThisTurn[activePlayer, worker];
             assignments[activePlayer, worker] = tile;
+            assignmentSlots[activePlayer, worker] = slot;
             workerPlacedThisTurn[activePlayer, worker] = true;
             Terrain terrain = map.GetTerrain(tile);
             string action = tile == turnStartTile ? "stays on" : previousTile == tile ? "remains on" : "moved to";
             string destination = map.HasResource(tile)
                 ? $"{terrain} ({ResourceCatalog.GetLabel(map.GetSelectedResource(tile))})"
                 : $"{terrain} (no resource)";
-            string placementMessage = $"Worker {worker + 1} {action} {destination}.";
+            string placementMessage = $"Worker {action} {destination}.";
 
             if (firstPlacementThisTurn)
             {
                 int nextWorker = FindNextUnplacedWorker(worker);
                 selectedWorker = nextWorker;
                 statusMessage = nextWorker >= 0
-                    ? $"{placementMessage} Worker {nextWorker + 1} selected next."
+                    ? $"{placementMessage} The next worker is selected."
                     : $"{placementMessage} All workers are placed.";
             }
             else
@@ -1045,7 +1112,7 @@ namespace OldenTop
             }
 
             selectedWorker = worker;
-            statusMessage = $"Worker {worker + 1} selected. Choose a highlighted hex.";
+            statusMessage = "Worker selected. Choose an available slot.";
             UpdateWorkerPlacementHighlights();
             return true;
         }
@@ -1058,9 +1125,10 @@ namespace OldenTop
             }
 
             assignments[activePlayer, worker] = turnStartTiles[activePlayer, worker];
+            assignmentSlots[activePlayer, worker] = turnStartSlots[activePlayer, worker];
             workerPlacedThisTurn[activePlayer, worker] = false;
             selectedWorker = worker;
-            statusMessage = $"Worker {worker + 1}'s move was reset. Choose a highlighted hex.";
+            statusMessage = "The worker's move was reset. Choose an available slot.";
             UpdateOccupiedTileOutlines();
             UpdateWorkerPlacementHighlights();
             return true;
@@ -1101,12 +1169,14 @@ namespace OldenTop
             for (int worker = 0; worker < WorkersPerPlayer; worker++)
             {
                 assignments[activePlayer, worker] = tile;
+                assignmentSlots[activePlayer, worker] = worker;
                 turnStartTiles[activePlayer, worker] = tile;
+                turnStartSlots[activePlayer, worker] = worker;
                 workerPlacedThisTurn[activePlayer, worker] = false;
             }
 
             selectedWorker = 0;
-            statusMessage = "Hearth placed. All workers begin there; Worker 1 is selected.";
+            statusMessage = "Hearth placed. All workers begin there; one worker is selected.";
             UpdateOccupiedTileOutlines();
             UpdateWorkerPlacementHighlights();
             return true;
@@ -1159,7 +1229,9 @@ namespace OldenTop
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
                     assignments[activePlayer, worker] = -1;
+                    assignmentSlots[activePlayer, worker] = -1;
                     turnStartTiles[activePlayer, worker] = -1;
+                    turnStartSlots[activePlayer, worker] = -1;
                     workerPlacedThisTurn[activePlayer, worker] = false;
                 }
 
@@ -1177,12 +1249,13 @@ namespace OldenTop
             for (int worker = 0; worker < WorkersPerPlayer; worker++)
             {
                 assignments[activePlayer, worker] = turnStartTiles[activePlayer, worker];
+                assignmentSlots[activePlayer, worker] = turnStartSlots[activePlayer, worker];
                 workerPlacedThisTurn[activePlayer, worker] = false;
             }
 
             selectedWorker = 0;
             ClearPointerState();
-            statusMessage = "All worker moves were reset. Worker 1 is selected.";
+            statusMessage = "All worker moves were reset. A worker is selected.";
             UpdateOccupiedTileOutlines();
             UpdateWorkerPlacementHighlights();
         }
@@ -1207,6 +1280,7 @@ namespace OldenTop
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
                     turnStartTiles[player, worker] = assignments[player, worker];
+                    turnStartSlots[player, worker] = assignmentSlots[player, worker];
                     workerPlacedThisTurn[player, worker] = false;
                 }
             }
@@ -1222,7 +1296,7 @@ namespace OldenTop
             }
 
             selectedWorker = 0;
-            statusMessage = $"Player {activePlayer + 1}: Worker 1 is selected. Choose a highlighted hex.";
+            statusMessage = $"Player {activePlayer + 1}: a worker is selected. Choose an available slot.";
             UpdateWorkerPlacementHighlights();
         }
 
@@ -1254,7 +1328,7 @@ namespace OldenTop
             {
                 if (map.GetHexDistance(startTile, tile) <= WorkerMoveRange &&
                     !IsTileOccupiedByOtherPlayer(tile) &&
-                    HasAvailableTileSlotForWorker(tile, selectedWorker))
+                    HasAvailableTileSlot(tile))
                 {
                     highlightedTiles.Add(tile);
                 }
@@ -1302,20 +1376,48 @@ namespace OldenTop
             return GetTilePeripheralContentCount(tile) > 0;
         }
 
-        private bool HasAvailableTileSlotForWorker(int tile, int worker)
+        private bool HasAvailableTileSlot(int tile)
         {
-            return GetTilePeripheralContentCount(tile, activePlayer, worker) < TileContentSlotCount;
+            return FindFirstAvailableTileSlot(tile) >= 0;
         }
 
-        private int GetTilePeripheralContentCount(int tile, int excludedPlayer = -1, int excludedWorker = -1)
+        private int FindFirstAvailableTileSlot(int tile)
+        {
+            for (int slot = 0; slot < TileContentSlotCount; slot++)
+            {
+                if (!IsTileSlotOccupied(tile, slot))
+                {
+                    return slot;
+                }
+            }
+
+            return -1;
+        }
+
+        private bool IsTileSlotOccupied(int tile, int slot)
+        {
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
+                    if (assignments[player, worker] == tile && assignmentSlots[player, worker] == slot)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private int GetTilePeripheralContentCount(int tile)
         {
             int count = 0;
             for (int player = 0; player < PlayerCount; player++)
             {
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
-                    if ((player != excludedPlayer || worker != excludedWorker) &&
-                        assignments[player, worker] == tile)
+                    if (assignments[player, worker] == tile)
                     {
                         count++;
                     }
@@ -1323,28 +1425,6 @@ namespace OldenTop
             }
 
             return count;
-        }
-
-        private int GetWorkerTileSlot(int player, int worker, int tile)
-        {
-            int slot = 0;
-            for (int workerPlayer = 0; workerPlayer < PlayerCount; workerPlayer++)
-            {
-                for (int workerIndex = 0; workerIndex < WorkersPerPlayer; workerIndex++)
-                {
-                    if (workerPlayer == player && workerIndex == worker)
-                    {
-                        return assignments[workerPlayer, workerIndex] == tile ? slot : -1;
-                    }
-
-                    if (assignments[workerPlayer, workerIndex] == tile)
-                    {
-                        slot++;
-                    }
-                }
-            }
-
-            return -1;
         }
 
         private void UpdateOccupiedTileOutlines()
@@ -1387,7 +1467,9 @@ namespace OldenTop
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
                     assignments[player, worker] = -1;
+                    assignmentSlots[player, worker] = -1;
                     turnStartTiles[player, worker] = -1;
+                    turnStartSlots[player, worker] = -1;
                     workerPlacedThisTurn[player, worker] = false;
                 }
 
@@ -1405,9 +1487,9 @@ namespace OldenTop
 
         private void EnsureStyles()
         {
-            if (ownershipRingTexture == null)
+            if (iconOutlineTexture == null)
             {
-                ownershipRingTexture = CreateOwnershipRingTexture();
+                iconOutlineTexture = CreateIconOutlineTexture();
             }
 
             if (panelStyle != null)
@@ -1443,20 +1525,6 @@ namespace OldenTop
             {
                 fontSize = 11
             };
-            workerStyle = new GUIStyle(GUI.skin.button)
-            {
-                fontSize = 13,
-                fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter,
-                normal = { textColor = Color.white }
-            };
-            workerBadgeStyle = new GUIStyle(GUI.skin.box)
-            {
-                fontSize = 11,
-                fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter,
-                normal = { textColor = new Color32(238, 231, 210, 255) }
-            };
             zoomButtonStyle = new GUIStyle(GUI.skin.button)
             {
                 fontSize = 22,
@@ -1480,12 +1548,12 @@ namespace OldenTop
             };
         }
 
-        private static Texture2D CreateOwnershipRingTexture()
+        private static Texture2D CreateIconOutlineTexture()
         {
             const int size = 64;
             Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
             {
-                name = "Runtime Ownership Ring",
+                name = "Runtime Icon Outline",
                 filterMode = FilterMode.Bilinear,
                 wrapMode = TextureWrapMode.Clamp
             };

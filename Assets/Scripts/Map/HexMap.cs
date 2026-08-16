@@ -120,7 +120,7 @@ namespace OldenTop
                     float diagonalDistance = 1f - absX / 1.7320508f - absY;
                     float insideDistance = Mathf.Min(sideDistance, diagonalDistance);
 
-                    if (insideDistance < 0f || (outlineOnly && insideDistance >= 0.055f))
+                    if (insideDistance < 0f || (outlineOnly && insideDistance >= 0.086f))
                     {
                         pixels[y * textureWidth + x] = new Color32(0, 0, 0, 0);
                     }
