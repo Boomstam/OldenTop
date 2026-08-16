@@ -143,7 +143,14 @@ After many turns, the board should visibly tell the history of the tribes. Prosp
 - Each player controls one tribe.
 - The game starts in **Spring**.
 - A tribe should begin with a mixture of ages rather than only same-aged adults.
-- Initial assignment/movement was tentatively limited to the starting location and neighboring spaces. Exact placement and travel range remain an **open question**.
+- **Prototype decision (2026-08-16):** before their first assignment phase, each player places one permanent hearth on any non-water hex.
+- The hearth replaces and removes the existing site/resource on its hex.
+- All of a tribe's workers begin on its hearth. Each season, every worker may remain on their starting hex or move **one hex-grid step**; their legal destinations are highlighted during placement.
+- A hex containing a hearth, building, or worker is occupied by that player and outlined in their color. Friendly pieces may share it, but the other player's workers may not enter it.
+- Every hex has exactly six peripheral content slots along the rays from its center toward each geometric vertex. Their outward position balances equal clearance from the center icon and the two neighboring hex edges. Workers and future features share this six-piece capacity.
+- The hearth is a special center piece and does not consume one of those six slots. Extending that center-piece exception to future buildings is a likely direction, but remains open until buildings are implemented.
+- At full zoom-in, resources, hearths, and workers use their original large icon sizes, with workers slightly smaller than resources. While zooming out, occupied resources, workers, and hearths shrink on screen with their tile so their tile-relative footprint stays equal to the full-zoom-in composition. Empty resources retain the original readability scaling, making them larger relative to their zoomed-out tile; that scaling returns when the last occupying piece leaves.
+- Roads, boats, river crossings, and other ways to extend or alter this one-tile seasonal movement remain an **open question**.
 
 ### 3.2 Person attributes
 
@@ -1009,8 +1016,8 @@ The brainstorm deliberately leaves many values and mechanisms unsettled. Importa
 ### Map and movement
 
 - Final map size and player count.
-- Starting placement, starting knowledge, and initial travel/assignment radius.
-- Movement cost, range, roads, boats, river crossing, and remote work.
+- Starting knowledge and whether hearth placement needs fairness constraints beyond forbidding water.
+- Movement cost and ways roads, boats, river crossings, or remote work can extend the prototype's one-tile seasonal movement.
 - Territorial control, shared hex use, and settlement rules.
 - Procedural-generation constraints that produce fair but non-symmetrical starts.
 

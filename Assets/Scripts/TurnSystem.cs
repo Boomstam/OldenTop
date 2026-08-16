@@ -120,6 +120,22 @@ namespace OldenTop
         }
     }
 
+    public static class HearthIconCatalog
+    {
+        private const string IconResourcePath = "ResourceIcons/hearth";
+        private static Texture2D icon;
+
+        public static Texture2D GetIcon()
+        {
+            if (icon == null)
+            {
+                icon = Resources.Load<Texture2D>(IconResourcePath);
+            }
+
+            return icon;
+        }
+    }
+
     public static class MapSeedUtility
     {
         public static int ToInt32(string seed)
@@ -277,8 +293,12 @@ namespace OldenTop
         private const float DragThreshold = 6f;
         private const float ResourceIconSize = 42f;
         private const float InventoryWorkerIconSize = 48f;
-        private const float MapWorkerIconSize = 36f;
-        private const float SelectedMapWorkerIconSize = 44f;
+        private const float MapWorkerIconSize = 32f;
+        private const float SelectedMapWorkerIconSize = 40f;
+        private const float HearthMarkerSize = 38f;
+        private const int WorkerMoveRange = 1;
+        private const int TileContentSlotCount = 6;
+        private const float HexEdgeNormalProjection = 0.8660254f;
         private const float MaximumZoomedResourceIconScale = 2f;
         private const float ZoomStepMultiplier = 0.85f;
         private const float MinimumZoomFraction = 0.35f;
@@ -288,11 +308,21 @@ namespace OldenTop
         private static readonly string[] SeasonNames = { "Spring", "Summer", "Autumn", "Winter" };
         private static readonly Color[] PlayerColors =
         {
-            new Color32(231, 167, 67, 255),
-            new Color32(98, 177, 220, 255)
+            new Color32(210, 62, 62, 255),
+            new Color32(62, 122, 218, 255)
         };
 
         private readonly int[,] assignments = new int[PlayerCount, WorkersPerPlayer];
+        private readonly int[,] turnStartTiles = new int[PlayerCount, WorkersPerPlayer];
+        private readonly bool[,] workerPlacedThisTurn = new bool[PlayerCount, WorkersPerPlayer];
+        private readonly bool[] completedFirstTurn = new bool[PlayerCount];
+        private readonly int[] hearthTiles = { -1, -1 };
+        private readonly List<int> highlightedTiles = new List<int>(7);
+        private readonly List<int>[] occupiedTilesByPlayer =
+        {
+            new List<int>(),
+            new List<int>()
+        };
 
         private HexMap map;
         private Camera mapCamera;
@@ -305,7 +335,7 @@ namespace OldenTop
         private Vector2 workerPressPosition;
         private float fittedCameraSize = 1f;
         private bool resolutionPhase;
-        private string statusMessage = "Click a worker, then a resource hex — or drag the worker onto the map.";
+        private string statusMessage = "Player 1: place your hearth on any non-water hex.";
 
         private GUIStyle panelStyle;
         private GUIStyle titleStyle;
@@ -317,12 +347,15 @@ namespace OldenTop
         private GUIStyle zoomButtonStyle;
         private GUIStyle resourceFallbackStyle;
         private GUIStyle tooltipStyle;
+        private Texture2D ownershipRingTexture;
         private string hoveredTooltip;
 
         public int ActivePlayer => activePlayer;
         public int Year => year;
         public string Season => SeasonNames[seasonIndex];
         public bool IsResolutionPhase => resolutionPhase;
+        public bool IsPlacingHearth => !resolutionPhase && hearthTiles[activePlayer] < 0;
+        private bool CanRecallActiveHearth => !completedFirstTurn[activePlayer] && hearthTiles[activePlayer] >= 0;
         public int SelectedWorker => selectedWorker;
         public float MapCameraSize => mapCamera != null ? mapCamera.orthographicSize : 0f;
         public float MinimumMapCameraSize => fittedCameraSize * MinimumZoomFraction;
@@ -343,6 +376,20 @@ namespace OldenTop
             }
         }
 
+        private float OccupiedTileIconScale
+        {
+            get
+            {
+                if (mapCamera == null)
+                {
+                    return 1f;
+                }
+
+                float cameraSize = Mathf.Max(0.001f, mapCamera.orthographicSize);
+                return MaximumZoomedResourceIconScale * MinimumMapCameraSize / cameraSize;
+            }
+        }
+
         public void Initialize(HexMap hexMap, Camera cameraOverride = null)
         {
             map = hexMap;
@@ -352,8 +399,12 @@ namespace OldenTop
                     ? Camera.main
                     : FindFirstObjectByType<Camera>();
             fittedCameraSize = mapCamera != null ? mapCamera.orthographicSize : 1f;
+            ClearHearths();
             ClearAssignments();
             ClearWorkerInteraction();
+            map?.ClearTileHighlights();
+            map?.ClearTileOccupancyOutlines();
+            statusMessage = "Player 1: place your hearth on any non-water hex.";
         }
 
         private void Awake()
@@ -374,6 +425,7 @@ namespace OldenTop
             EnsureStyles();
             hoveredTooltip = null;
             DrawTileResourceIcons();
+            DrawHearthsOnMap();
             DrawAssignmentsOnMap();
             DrawMapHeader();
             DrawInventoryPanel();
@@ -407,7 +459,11 @@ namespace OldenTop
             GUI.Label(new Rect(x, y, contentWidth, 24f), $"Year {year}  •  {SeasonNames[seasonIndex]}", headingStyle);
             y += 30f;
 
-            string phaseText = resolutionPhase ? "COMMITMENTS READY" : $"PLAYER {activePlayer + 1} ASSIGNS";
+            string phaseText = resolutionPhase
+                ? "COMMITMENTS READY"
+                : IsPlacingHearth
+                    ? $"PLAYER {activePlayer + 1} PLACES HEARTH"
+                    : $"PLAYER {activePlayer + 1} ASSIGNS";
             Color previousColor = GUI.color;
             GUI.color = resolutionPhase ? Color.white : PlayerColors[activePlayer];
             GUI.Label(new Rect(x, y, contentWidth, 30f), phaseText, headingStyle);
@@ -434,10 +490,17 @@ namespace OldenTop
             }
 
             y += 8f;
-            GUI.Label(new Rect(x, y, contentWidth, 24f), "WORKER INVENTORY", headingStyle);
+            GUI.Label(new Rect(x, y, contentWidth, 24f),
+                IsPlacingHearth ? "STARTING HEARTH" : "WORKERS", headingStyle);
             y += 29f;
 
-            if (!resolutionPhase)
+            if (IsPlacingHearth)
+            {
+                GUI.Label(new Rect(x, y, contentWidth, 88f),
+                    "Click any non-water hex to place your permanent hearth. All workers begin there.",
+                    bodyStyle);
+            }
+            else if (!resolutionPhase)
             {
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
@@ -450,9 +513,12 @@ namespace OldenTop
 
                 y += InventoryWorkerIconSize * 2f + 16f;
 
-                if (GUI.Button(new Rect(x, Screen.height - 94f, contentWidth, 30f), "Recall this player's workers"))
+                string recallLabel = CanRecallActiveHearth
+                    ? "Recall workers and hearth"
+                    : "Reset this player's worker moves";
+                if (GUI.Button(new Rect(x, Screen.height - 94f, contentWidth, 30f), recallLabel))
                 {
-                    RecallActivePlayersWorkers();
+                    RecallActivePlayerPieces();
                 }
 
                 GUI.backgroundColor = PlayerColors[activePlayer];
@@ -480,20 +546,20 @@ namespace OldenTop
 
         private void DrawWorkerCard(Rect rect, int worker)
         {
-            bool assigned = assignments[activePlayer, worker] >= 0;
+            bool placedThisTurn = workerPlacedThisTurn[activePlayer, worker];
             bool selected = selectedWorker == worker;
 
             Color previousBackground = GUI.backgroundColor;
             GUI.backgroundColor = selected
                 ? Color.Lerp(PlayerColors[activePlayer], Color.white, 0.3f)
-                : assigned
+                : placedThisTurn
                     ? new Color(0.62f, 0.62f, 0.62f, 1f)
                     : PlayerColors[activePlayer];
             GUI.Box(rect, GUIContent.none, workerStyle);
             GUI.backgroundColor = previousBackground;
             DrawWorkerIcon(new Rect(rect.x + 3f, rect.y + 3f, rect.width - 6f, rect.height - 6f),
-                activePlayer, worker, assigned,
-                assigned ? "assigned" : "available");
+                activePlayer, worker, placedThisTurn,
+                placedThisTurn ? "placed this turn" : "ready to move");
 
             Event current = Event.current;
             if (current.type == EventType.MouseDown && current.button == 0 && rect.Contains(current.mousePosition))
@@ -504,7 +570,11 @@ namespace OldenTop
 
         private void BeginWorkerPress(int worker, Event current)
         {
-            SelectActiveWorker(worker);
+            if (!SelectActiveWorker(worker))
+            {
+                return;
+            }
+
             pressedWorker = worker;
             workerPressPosition = current.mousePosition;
             current.Use();
@@ -512,6 +582,18 @@ namespace OldenTop
 
         private void HandlePointerInteraction(Event current)
         {
+            if (IsPlacingHearth)
+            {
+                if (current.type == EventType.MouseDown && current.button == 0 &&
+                    TryGetTileAtGuiPosition(current.mousePosition, out int hearthTile))
+                {
+                    TryPlaceActiveHearth(hearthTile);
+                    current.Use();
+                }
+
+                return;
+            }
+
             if (current.type == EventType.KeyDown && current.keyCode == KeyCode.Escape &&
                 (pressedWorker >= 0 || draggingWorker >= 0))
             {
@@ -525,7 +607,7 @@ namespace OldenTop
                 Vector2.Distance(workerPressPosition, current.mousePosition) >= DragThreshold)
             {
                 draggingWorker = pressedWorker;
-                statusMessage = $"Drop Worker {draggingWorker + 1} on a resource hex, or off the map to return them to inventory.";
+                statusMessage = $"Drop Worker {draggingWorker + 1} on a highlighted hex, or off the map to cancel their move.";
                 current.Use();
                 return;
             }
@@ -539,7 +621,7 @@ namespace OldenTop
                 }
                 else
                 {
-                    ReturnActiveWorkerToInventory(worker);
+                    ResetActiveWorkerMove(worker);
                 }
 
                 ClearPointerState();
@@ -588,9 +670,13 @@ namespace OldenTop
             }
 
             Rect mapRect = mapCamera.pixelRect;
-            float iconSize = MapResourceIconSize;
             for (int tile = 0; tile < map.GeneratedTileCount; tile++)
             {
+                if (!map.HasResource(tile))
+                {
+                    continue;
+                }
+
                 Vector3 screen = mapCamera.WorldToScreenPoint(map.GetTileWorldPosition(tile));
                 if (screen.z < 0f || !mapRect.Contains(new Vector2(screen.x, screen.y)))
                 {
@@ -598,6 +684,9 @@ namespace OldenTop
                 }
 
                 Resource resource = map.GetSelectedResource(tile);
+                float iconSize = IsTileOccupied(tile)
+                    ? ResourceIconSize * OccupiedTileIconScale
+                    : MapResourceIconSize;
                 Rect iconRect = new Rect(screen.x - iconSize * 0.5f,
                     Screen.height - screen.y - iconSize * 0.5f, iconSize, iconSize);
                 DrawResourceIcon(iconRect, resource);
@@ -644,36 +733,121 @@ namespace OldenTop
                 return;
             }
 
+            for (int drawPass = 0; drawPass < 2; drawPass++)
+            {
+                bool drawSelectedWorker = drawPass == 1;
+                for (int player = 0; player < PlayerCount; player++)
+                {
+                    for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                    {
+                        bool selected = player == activePlayer && worker == selectedWorker;
+                        if (selected != drawSelectedWorker)
+                        {
+                            continue;
+                        }
+
+                        int tile = assignments[player, worker];
+                        if (tile < 0 || (player == activePlayer && worker == draggingWorker))
+                        {
+                            continue;
+                        }
+
+                        int slot = GetWorkerTileSlot(player, worker, tile);
+                        if (slot < 0 || slot >= TileContentSlotCount)
+                        {
+                            continue;
+                        }
+
+                        Vector3 screen = GetWorkerSlotScreenPosition(tile, slot);
+                        if (screen.z < 0f)
+                        {
+                            continue;
+                        }
+
+                        float markerSize = (selected ? SelectedMapWorkerIconSize : MapWorkerIconSize) *
+                                           OccupiedTileIconScale;
+                        Rect marker = new Rect(screen.x - markerSize * 0.5f,
+                            Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
+                        DrawWorkerIcon(marker, player, worker, false, "placed");
+
+                        Event current = Event.current;
+                        if (!resolutionPhase && player == activePlayer && current.type == EventType.MouseDown &&
+                            current.button == 0 && marker.Contains(current.mousePosition))
+                        {
+                            BeginWorkerPress(worker, current);
+                        }
+                    }
+                }
+            }
+        }
+
+        private Vector3 GetWorkerSlotScreenPosition(int tile, int slot)
+        {
+            Vector3 center = mapCamera.WorldToScreenPoint(map.GetTileWorldPosition(tile));
+            Vector3 corner = mapCamera.WorldToScreenPoint(map.GetTileVertexWorldPosition(tile, slot));
+            float centerToCorner = Vector2.Distance(center, corner);
+            if (centerToCorner <= 0.001f)
+            {
+                return center;
+            }
+
+            float centerIconRadius = GetTileCenterIconSize(tile) * 0.5f;
+            float centerToWorker = (HexEdgeNormalProjection * centerToCorner + centerIconRadius) /
+                                   (1f + HexEdgeNormalProjection);
+            return Vector3.Lerp(center, corner, Mathf.Clamp01(centerToWorker / centerToCorner));
+        }
+
+        private float GetTileCenterIconSize(int tile)
+        {
             for (int player = 0; player < PlayerCount; player++)
             {
-                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                if (hearthTiles[player] == tile)
                 {
-                    int tile = assignments[player, worker];
-                    if (tile < 0 || (player == activePlayer && worker == draggingWorker))
-                    {
-                        continue;
-                    }
+                    return HearthMarkerSize * OccupiedTileIconScale;
+                }
+            }
 
-                    Vector2 offset = GetMarkerOffset(player, worker);
-                    Vector3 screen = mapCamera.WorldToScreenPoint(map.GetTileWorldPosition(tile) + offset);
-                    if (screen.z < 0f)
-                    {
-                        continue;
-                    }
+            return map.HasResource(tile) ? ResourceIconSize * OccupiedTileIconScale : 0f;
+        }
 
-                    bool selected = player == activePlayer && worker == selectedWorker;
-                    float zoomScale = MapResourceIconSize / ResourceIconSize;
-                    float markerSize = (selected ? SelectedMapWorkerIconSize : MapWorkerIconSize) * zoomScale;
-                    Rect marker = new Rect(screen.x - markerSize * 0.5f,
-                        Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
-                    DrawWorkerIcon(marker, player, worker, false, "placed");
+        private void DrawHearthsOnMap()
+        {
+            if (mapCamera == null)
+            {
+                return;
+            }
 
-                    Event current = Event.current;
-                    if (!resolutionPhase && player == activePlayer && current.type == EventType.MouseDown &&
-                        current.button == 0 && marker.Contains(current.mousePosition))
-                    {
-                        BeginWorkerPress(worker, current);
-                    }
+            float markerSize = HearthMarkerSize * OccupiedTileIconScale;
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                int tile = hearthTiles[player];
+                if (tile < 0)
+                {
+                    continue;
+                }
+
+                Vector3 screen = mapCamera.WorldToScreenPoint(map.GetTileWorldPosition(tile));
+                if (screen.z < 0f)
+                {
+                    continue;
+                }
+
+                Rect marker = new Rect(screen.x - markerSize * 0.5f,
+                    Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
+                DrawOwnershipRing(marker, player);
+                Texture2D hearthIcon = HearthIconCatalog.GetIcon();
+                if (hearthIcon != null)
+                {
+                    GUI.DrawTexture(marker, hearthIcon, ScaleMode.ScaleToFit, true);
+                }
+                else
+                {
+                    GUI.Label(marker, "?", resourceFallbackStyle);
+                }
+
+                if (marker.Contains(Event.current.mousePosition))
+                {
+                    hoveredTooltip = $"Player {player + 1} hearth";
                 }
             }
         }
@@ -689,7 +863,10 @@ namespace OldenTop
                 controlsX - panelWidth - 26f, buttonSize);
             GUI.Box(header, resolutionPhase
                 ? "All commitments are visible — advance when ready"
-                : $"Player {activePlayer + 1}: click a worker then a tile, or drag a worker", headingStyle);
+                : IsPlacingHearth
+                    ? $"Player {activePlayer + 1}: place your hearth on a non-water hex"
+                    : $"Player {activePlayer + 1}: each worker may stay or move one tile",
+                headingStyle);
 
             if (GUI.Button(new Rect(controlsX, 16f, buttonSize, buttonSize), "−", zoomButtonStyle))
             {
@@ -741,6 +918,7 @@ namespace OldenTop
 
         private void DrawWorkerIcon(Rect rect, int player, int worker, bool dimmed, string state)
         {
+            DrawOwnershipRing(rect, player, dimmed);
             Color previousColor = GUI.color;
             if (dimmed)
             {
@@ -769,49 +947,122 @@ namespace OldenTop
             }
         }
 
+        private void DrawOwnershipRing(Rect iconRect, int player, bool dimmed = false)
+        {
+            if (ownershipRingTexture == null || player < 0 || player >= PlayerColors.Length)
+            {
+                return;
+            }
+
+            float padding = Mathf.Max(3f, iconRect.width * 0.1f);
+            Rect ringRect = new Rect(iconRect.x - padding, iconRect.y - padding,
+                iconRect.width + padding * 2f, iconRect.height + padding * 2f);
+            Color previousColor = GUI.color;
+            Color playerColor = PlayerColors[player];
+            playerColor.a = dimmed ? 0.48f : 1f;
+            GUI.color = playerColor;
+            GUI.DrawTexture(ringRect, ownershipRingTexture, ScaleMode.ScaleToFit, true);
+            GUI.color = previousColor;
+        }
+
         public bool TryAssignActiveWorker(int worker, int tile)
         {
             if (resolutionPhase || map == null || worker < 0 || worker >= WorkersPerPlayer ||
-                tile < 0 || tile >= map.GeneratedTileCount)
+                tile < 0 || tile >= map.GeneratedTileCount || IsPlacingHearth)
             {
+                return false;
+            }
+
+            int turnStartTile = turnStartTiles[activePlayer, worker];
+            int distance = map.GetHexDistance(turnStartTile, tile);
+            if (turnStartTile < 0 || distance > WorkerMoveRange)
+            {
+                statusMessage = "That hex is not highlighted. A worker may stay or move one tile.";
+                return false;
+            }
+
+            if (IsTileOccupiedByOtherPlayer(tile))
+            {
+                statusMessage = "That hex is occupied by the other player.";
+                return false;
+            }
+
+            if (!HasAvailableTileSlotForWorker(tile, worker))
+            {
+                statusMessage = "That hex already uses all six content slots.";
                 return false;
             }
 
             int previousTile = assignments[activePlayer, worker];
+            bool firstPlacementThisTurn = !workerPlacedThisTurn[activePlayer, worker];
             assignments[activePlayer, worker] = tile;
-            selectedWorker = worker;
+            workerPlacedThisTurn[activePlayer, worker] = true;
             Terrain terrain = map.GetTerrain(tile);
-            Resource resource = map.GetSelectedResource(tile);
-            string action = previousTile < 0 ? "assigned to" : previousTile == tile ? "remains on" : "moved to";
-            statusMessage = $"Worker {worker + 1} {action} {terrain} ({ResourceCatalog.GetLabel(resource)}).";
+            string action = tile == turnStartTile ? "stays on" : previousTile == tile ? "remains on" : "moved to";
+            string destination = map.HasResource(tile)
+                ? $"{terrain} ({ResourceCatalog.GetLabel(map.GetSelectedResource(tile))})"
+                : $"{terrain} (no resource)";
+            string placementMessage = $"Worker {worker + 1} {action} {destination}.";
+
+            if (firstPlacementThisTurn)
+            {
+                int nextWorker = FindNextUnplacedWorker(worker);
+                selectedWorker = nextWorker;
+                statusMessage = nextWorker >= 0
+                    ? $"{placementMessage} Worker {nextWorker + 1} selected next."
+                    : $"{placementMessage} All workers are placed.";
+            }
+            else
+            {
+                selectedWorker = worker;
+                statusMessage = placementMessage;
+            }
+
+            UpdateOccupiedTileOutlines();
+            UpdateWorkerPlacementHighlights();
             return true;
+        }
+
+        private int FindNextUnplacedWorker(int currentWorker)
+        {
+            for (int offset = 1; offset <= WorkersPerPlayer; offset++)
+            {
+                int candidate = (currentWorker + offset) % WorkersPerPlayer;
+                if (!workerPlacedThisTurn[activePlayer, candidate])
+                {
+                    return candidate;
+                }
+            }
+
+            return -1;
         }
 
         public bool SelectActiveWorker(int worker)
         {
-            if (resolutionPhase || worker < 0 || worker >= WorkersPerPlayer)
+            if (resolutionPhase || IsPlacingHearth || worker < 0 || worker >= WorkersPerPlayer)
             {
                 return false;
             }
 
             selectedWorker = worker;
-            statusMessage = $"Worker {worker + 1} selected. Click a resource hex to place them, or drag to move them.";
+            statusMessage = $"Worker {worker + 1} selected. Choose a highlighted hex.";
+            UpdateWorkerPlacementHighlights();
             return true;
         }
 
-        public bool ReturnActiveWorkerToInventory(int worker)
+        private bool ResetActiveWorkerMove(int worker)
         {
             if (resolutionPhase || worker < 0 || worker >= WorkersPerPlayer)
             {
                 return false;
             }
 
-            bool wasAssigned = assignments[activePlayer, worker] >= 0;
-            assignments[activePlayer, worker] = -1;
+            assignments[activePlayer, worker] = turnStartTiles[activePlayer, worker];
+            workerPlacedThisTurn[activePlayer, worker] = false;
             selectedWorker = worker;
-            statusMessage = wasAssigned
-                ? $"Worker {worker + 1} returned to inventory."
-                : $"Worker {worker + 1} remains in inventory.";
+            statusMessage = $"Worker {worker + 1}'s move was reset. Choose a highlighted hex.";
+            UpdateOccupiedTileOutlines();
+            UpdateWorkerPlacementHighlights();
             return true;
         }
 
@@ -825,14 +1076,57 @@ namespace OldenTop
             return assignments[player, worker];
         }
 
+        public bool TryPlaceActiveHearth(int tile)
+        {
+            if (resolutionPhase || map == null || !IsPlacingHearth ||
+                tile < 0 || tile >= map.GeneratedTileCount)
+            {
+                return false;
+            }
+
+            if (map.GetTerrain(tile) == Terrain.Water)
+            {
+                statusMessage = "A hearth cannot be placed on water. Choose a land hex.";
+                return false;
+            }
+
+            if (IsTileOccupiedByOtherPlayer(tile))
+            {
+                statusMessage = "That hex is occupied by the other player. Choose another land hex.";
+                return false;
+            }
+
+            hearthTiles[activePlayer] = tile;
+            map.RemoveResource(tile);
+            for (int worker = 0; worker < WorkersPerPlayer; worker++)
+            {
+                assignments[activePlayer, worker] = tile;
+                turnStartTiles[activePlayer, worker] = tile;
+                workerPlacedThisTurn[activePlayer, worker] = false;
+            }
+
+            selectedWorker = 0;
+            statusMessage = "Hearth placed. All workers begin there; Worker 1 is selected.";
+            UpdateOccupiedTileOutlines();
+            UpdateWorkerPlacementHighlights();
+            return true;
+        }
+
         public void EndAssignments()
         {
+            if (IsPlacingHearth)
+            {
+                statusMessage = "Place your hearth before beginning your first assignments.";
+                return;
+            }
+
+            completedFirstTurn[activePlayer] = true;
             ClearWorkerInteraction();
 
             if (activePlayer < PlayerCount - 1)
             {
                 activePlayer++;
-                statusMessage = $"Player {activePlayer + 1}, assign your workers.";
+                BeginActivePlayerAssignments();
                 return;
             }
 
@@ -843,7 +1137,6 @@ namespace OldenTop
 
         public void AdvanceSeason()
         {
-            ClearAssignments();
             activePlayer = 0;
             resolutionPhase = false;
             seasonIndex++;
@@ -853,19 +1146,84 @@ namespace OldenTop
                 year++;
             }
 
-            ClearWorkerInteraction();
-            statusMessage = $"Player 1 begins {SeasonNames[seasonIndex]}. Click a worker then a tile, or drag a worker.";
+            PrepareSeasonWorkerMoves();
+            BeginActivePlayerAssignments();
         }
 
-        private void RecallActivePlayersWorkers()
+        private void RecallActivePlayerPieces()
         {
-            for (int worker = 0; worker < WorkersPerPlayer; worker++)
+            if (CanRecallActiveHearth)
             {
-                assignments[activePlayer, worker] = -1;
+                int recalledHearthTile = hearthTiles[activePlayer];
+                hearthTiles[activePlayer] = -1;
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
+                    assignments[activePlayer, worker] = -1;
+                    turnStartTiles[activePlayer, worker] = -1;
+                    workerPlacedThisTurn[activePlayer, worker] = false;
+                }
+
+                if (!IsOtherPlayersHearthOn(recalledHearthTile))
+                {
+                    map.RestoreResource(recalledHearthTile);
+                }
+
+                ClearWorkerInteraction();
+                statusMessage = $"Player {activePlayer + 1}: place your hearth on any non-water hex.";
+                UpdateOccupiedTileOutlines();
+                return;
             }
 
+            for (int worker = 0; worker < WorkersPerPlayer; worker++)
+            {
+                assignments[activePlayer, worker] = turnStartTiles[activePlayer, worker];
+                workerPlacedThisTurn[activePlayer, worker] = false;
+            }
+
+            selectedWorker = 0;
+            ClearPointerState();
+            statusMessage = "All worker moves were reset. Worker 1 is selected.";
+            UpdateOccupiedTileOutlines();
+            UpdateWorkerPlacementHighlights();
+        }
+
+        private bool IsOtherPlayersHearthOn(int tile)
+        {
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                if (player != activePlayer && hearthTiles[player] == tile)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void PrepareSeasonWorkerMoves()
+        {
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
+                    turnStartTiles[player, worker] = assignments[player, worker];
+                    workerPlacedThisTurn[player, worker] = false;
+                }
+            }
+        }
+
+        private void BeginActivePlayerAssignments()
+        {
             ClearWorkerInteraction();
-            statusMessage = "All of this player's workers returned to inventory.";
+            if (hearthTiles[activePlayer] < 0)
+            {
+                statusMessage = $"Player {activePlayer + 1}: place your hearth on any non-water hex.";
+                return;
+            }
+
+            selectedWorker = 0;
+            statusMessage = $"Player {activePlayer + 1}: Worker 1 is selected. Choose a highlighted hex.";
+            UpdateWorkerPlacementHighlights();
         }
 
         private void ClearPointerState()
@@ -878,6 +1236,148 @@ namespace OldenTop
         {
             selectedWorker = -1;
             ClearPointerState();
+            map?.ClearTileHighlights();
+        }
+
+        private void UpdateWorkerPlacementHighlights()
+        {
+            highlightedTiles.Clear();
+            if (map == null || resolutionPhase || IsPlacingHearth ||
+                selectedWorker < 0 || selectedWorker >= WorkersPerPlayer)
+            {
+                map?.ClearTileHighlights();
+                return;
+            }
+
+            int startTile = turnStartTiles[activePlayer, selectedWorker];
+            for (int tile = 0; tile < map.GeneratedTileCount; tile++)
+            {
+                if (map.GetHexDistance(startTile, tile) <= WorkerMoveRange &&
+                    !IsTileOccupiedByOtherPlayer(tile) &&
+                    HasAvailableTileSlotForWorker(tile, selectedWorker))
+                {
+                    highlightedTiles.Add(tile);
+                }
+            }
+
+            map.SetTileHighlights(highlightedTiles, PlayerColors[activePlayer]);
+        }
+
+        private bool IsTileOccupiedByOtherPlayer(int tile)
+        {
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                if (player == activePlayer)
+                {
+                    continue;
+                }
+
+                if (hearthTiles[player] == tile)
+                {
+                    return true;
+                }
+
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
+                    if (assignments[player, worker] == tile)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsTileOccupied(int tile)
+        {
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                if (hearthTiles[player] == tile)
+                {
+                    return true;
+                }
+            }
+
+            return GetTilePeripheralContentCount(tile) > 0;
+        }
+
+        private bool HasAvailableTileSlotForWorker(int tile, int worker)
+        {
+            return GetTilePeripheralContentCount(tile, activePlayer, worker) < TileContentSlotCount;
+        }
+
+        private int GetTilePeripheralContentCount(int tile, int excludedPlayer = -1, int excludedWorker = -1)
+        {
+            int count = 0;
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
+                    if ((player != excludedPlayer || worker != excludedWorker) &&
+                        assignments[player, worker] == tile)
+                    {
+                        count++;
+                    }
+                }
+            }
+
+            return count;
+        }
+
+        private int GetWorkerTileSlot(int player, int worker, int tile)
+        {
+            int slot = 0;
+            for (int workerPlayer = 0; workerPlayer < PlayerCount; workerPlayer++)
+            {
+                for (int workerIndex = 0; workerIndex < WorkersPerPlayer; workerIndex++)
+                {
+                    if (workerPlayer == player && workerIndex == worker)
+                    {
+                        return assignments[workerPlayer, workerIndex] == tile ? slot : -1;
+                    }
+
+                    if (assignments[workerPlayer, workerIndex] == tile)
+                    {
+                        slot++;
+                    }
+                }
+            }
+
+            return -1;
+        }
+
+        private void UpdateOccupiedTileOutlines()
+        {
+            if (map == null)
+            {
+                return;
+            }
+
+            map.ClearTileOccupancyOutlines();
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                List<int> occupiedTiles = occupiedTilesByPlayer[player];
+                occupiedTiles.Clear();
+                AddOccupiedTile(occupiedTiles, hearthTiles[player]);
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
+                    AddOccupiedTile(occupiedTiles, assignments[player, worker]);
+                }
+
+                for (int index = 0; index < occupiedTiles.Count; index++)
+                {
+                    map.SetTileOccupancyOutline(occupiedTiles[index], PlayerColors[player]);
+                }
+            }
+        }
+
+        private static void AddOccupiedTile(List<int> occupiedTiles, int tile)
+        {
+            if (tile >= 0 && !occupiedTiles.Contains(tile))
+            {
+                occupiedTiles.Add(tile);
+            }
         }
 
         private void ClearAssignments()
@@ -887,19 +1387,29 @@ namespace OldenTop
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
                     assignments[player, worker] = -1;
+                    turnStartTiles[player, worker] = -1;
+                    workerPlacedThisTurn[player, worker] = false;
                 }
+
+                completedFirstTurn[player] = false;
             }
         }
 
-        private static Vector2 GetMarkerOffset(int player, int worker)
+        private void ClearHearths()
         {
-            float x = ((worker & 1) == 0 ? -0.14f : 0.14f) + (player == 0 ? -0.035f : 0.035f);
-            float y = (worker < 2 ? 0.14f : -0.14f) + (player == 0 ? 0.035f : -0.035f);
-            return new Vector2(x, y);
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                hearthTiles[player] = -1;
+            }
         }
 
         private void EnsureStyles()
         {
+            if (ownershipRingTexture == null)
+            {
+                ownershipRingTexture = CreateOwnershipRingTexture();
+            }
+
             if (panelStyle != null)
             {
                 return;
@@ -968,6 +1478,34 @@ namespace OldenTop
                 alignment = TextAnchor.MiddleCenter,
                 normal = { textColor = new Color32(238, 231, 210, 255) }
             };
+        }
+
+        private static Texture2D CreateOwnershipRingTexture()
+        {
+            const int size = 64;
+            Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            {
+                name = "Runtime Ownership Ring",
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            Color32[] pixels = new Color32[size * size];
+            Vector2 center = new Vector2(size * 0.5f, size * 0.5f);
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float distance = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), center);
+                    bool inRing = distance >= size * 0.39f && distance <= size * 0.49f;
+                    pixels[y * size + x] = inRing
+                        ? new Color32(255, 255, 255, 255)
+                        : new Color32(0, 0, 0, 0);
+                }
+            }
+
+            texture.SetPixels32(pixels);
+            texture.Apply(false, true);
+            return texture;
         }
     }
 }

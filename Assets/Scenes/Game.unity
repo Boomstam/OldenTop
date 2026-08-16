@@ -150,7 +150,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c50c1fcc14fac439d81de439603bf422, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::OldenTop.GameInitializer
-  seed: 1375840081
+  seed: sdf
 --- !u!114 &265273147
 MonoBehaviour:
   m_ObjectHideFlags: 0

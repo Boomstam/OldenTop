@@ -40,32 +40,23 @@ namespace OldenTop.Tests
         }
 
         [Test]
-        public void SelectedWorker_CanBePlacedAndMovedToAnotherTile()
+        public void SelectedWorker_CanStayOrMoveOneTileFromTurnStart()
         {
+            Assert.That(turnSystem.TryPlaceActiveHearth(0), Is.True);
             Assert.That(turnSystem.SelectActiveWorker(1), Is.True);
             Assert.That(turnSystem.SelectedWorker, Is.EqualTo(1));
 
-            Assert.That(turnSystem.TryAssignActiveWorker(turnSystem.SelectedWorker, 12), Is.True);
-            Assert.That(turnSystem.GetAssignment(0, 1), Is.EqualTo(12));
+            Assert.That(turnSystem.TryAssignActiveWorker(turnSystem.SelectedWorker, 1), Is.True);
+            Assert.That(turnSystem.GetAssignment(0, 1), Is.EqualTo(1));
 
-            Assert.That(turnSystem.TryAssignActiveWorker(turnSystem.SelectedWorker, 37), Is.True);
-            Assert.That(turnSystem.GetAssignment(0, 1), Is.EqualTo(37));
-        }
-
-        [Test]
-        public void PlacedWorker_CanReturnToInventory()
-        {
-            Assert.That(turnSystem.TryAssignActiveWorker(2, 25), Is.True);
-
-            Assert.That(turnSystem.ReturnActiveWorkerToInventory(2), Is.True);
-
-            Assert.That(turnSystem.GetAssignment(0, 2), Is.EqualTo(-1));
-            Assert.That(turnSystem.SelectedWorker, Is.EqualTo(2));
+            Assert.That(turnSystem.TryAssignActiveWorker(1, 20), Is.True);
+            Assert.That(turnSystem.GetAssignment(0, 1), Is.EqualTo(20));
         }
 
         [Test]
         public void EndingAssignments_ClearsSelectionForNextPlayer()
         {
+            Assert.That(turnSystem.TryPlaceActiveHearth(0), Is.True);
             Assert.That(turnSystem.SelectActiveWorker(0), Is.True);
 
             turnSystem.EndAssignments();

@@ -16,6 +16,9 @@ This project uses the AI Game Developer MCP server through the Codex MCP entry n
 
 ## Working Style
 - Translate hard design constraints into explicit implementation invariants, then verify those exact invariants before handoff. Do not substitute a merely topologically similar representation (for example, adjacency links are not equivalent to geometry placed on hex edges).
+- Tests are not a default completion ritual for early prototype changes. Add or run them only when they protect a concrete non-obvious invariant, investigate a regression, cover risky algorithmic/state work, or are explicitly requested. Use the narrowest targeted test available; do not fall back to the full project or package suite merely because a filter is inconvenient.
+- Play Mode screenshots are not a routine verification step. Capture one only when exact visual appearance is part of the requested outcome, a visual defect is being diagnosed, or the image can resolve a specific uncertainty that code/scene inspection cannot. Do not take screenshots just to prove that work was done.
+- Keep verification effort proportional to the change. Before a costly check, identify the specific failure it could catch and whether a cheaper inspection would answer the same question.
 
 ## Game Design Reference
 

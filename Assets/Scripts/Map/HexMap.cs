@@ -43,12 +43,16 @@ namespace OldenTop
 
         private System.Random random;
         private Sprite hexSprite;
+        private Sprite hexOutlineSprite;
         private Sprite squareSprite;
         private Sprite circleSprite;
         private Transform tileRoot;
         private Transform riverRoot;
         private readonly GameObject[] tileObjects = new GameObject[TileCount];
+        private readonly SpriteRenderer[] tileHighlightRenderers = new SpriteRenderer[TileCount];
+        private readonly SpriteRenderer[] tileOccupancyOutlineRenderers = new SpriteRenderer[TileCount];
         private Resource[] selectedResources = new Resource[TileCount];
+        private readonly bool[] resourcePresent = CreateInitialResourcePresence();
 
         public int GeneratedTileCount => TileCount;
         public string MapSeed { get; private set; }
@@ -62,6 +66,7 @@ namespace OldenTop
             CalculateCenters();
             GenerateTerrain();
             selectedResources = ResourceSave.LoadOrCreate(MapSeed, terrain);
+            ResetResourcePresence();
             BuildRiverGraph();
             GenerateRivers();
             ValidateRiverEdges();
@@ -81,18 +86,19 @@ namespace OldenTop
 
         private void CreateSharedSprites()
         {
-            hexSprite = CreateHexSprite();
+            hexSprite = CreateHexSprite(false);
+            hexOutlineSprite = CreateHexSprite(true);
             squareSprite = CreateSquareSprite();
             circleSprite = CreateCircleSprite();
         }
 
-        private static Sprite CreateHexSprite()
+        private static Sprite CreateHexSprite(bool outlineOnly)
         {
             const int textureWidth = 128;
             const int textureHeight = 148;
             Texture2D texture = new Texture2D(textureWidth, textureHeight, TextureFormat.RGBA32, false)
             {
-                name = "Runtime Pointy Hex",
+                name = outlineOnly ? "Runtime Pointy Hex Outline" : "Runtime Pointy Hex",
                 filterMode = FilterMode.Bilinear,
                 wrapMode = TextureWrapMode.Clamp
             };
@@ -114,13 +120,13 @@ namespace OldenTop
                     float diagonalDistance = 1f - absX / 1.7320508f - absY;
                     float insideDistance = Mathf.Min(sideDistance, diagonalDistance);
 
-                    if (insideDistance < 0f)
+                    if (insideDistance < 0f || (outlineOnly && insideDistance >= 0.055f))
                     {
                         pixels[y * textureWidth + x] = new Color32(0, 0, 0, 0);
                     }
                     else
                     {
-                        byte shade = insideDistance < 0.035f ? (byte)155 : (byte)255;
+                        byte shade = outlineOnly || insideDistance >= 0.035f ? (byte)255 : (byte)155;
                         pixels[y * textureWidth + x] = new Color32(shade, shade, shade, 255);
                     }
                 }
@@ -635,6 +641,22 @@ namespace OldenTop
                     renderer.sprite = hexSprite;
                     renderer.color = GetTerrainColor(terrain[index]);
                     renderer.sortingOrder = 0;
+
+                    GameObject highlightObject = new GameObject("Placement Highlight");
+                    highlightObject.transform.SetParent(tileObject.transform, false);
+                    SpriteRenderer highlight = highlightObject.AddComponent<SpriteRenderer>();
+                    highlight.sprite = hexSprite;
+                    highlight.sortingOrder = 2;
+                    highlight.enabled = false;
+                    tileHighlightRenderers[index] = highlight;
+
+                    GameObject occupancyOutlineObject = new GameObject("Occupancy Outline");
+                    occupancyOutlineObject.transform.SetParent(tileObject.transform, false);
+                    SpriteRenderer occupancyOutline = occupancyOutlineObject.AddComponent<SpriteRenderer>();
+                    occupancyOutline.sprite = hexOutlineSprite;
+                    occupancyOutline.sortingOrder = 3;
+                    occupancyOutline.enabled = false;
+                    tileOccupancyOutlineRenderers[index] = occupancyOutline;
                 }
             }
         }
@@ -763,6 +785,14 @@ namespace OldenTop
             return centers[Mathf.Clamp(tileIndex, 0, centers.Length - 1)];
         }
 
+        public Vector2 GetTileVertexWorldPosition(int tileIndex, int vertexIndex)
+        {
+            int tile = Mathf.Clamp(tileIndex, 0, centers.Length - 1);
+            int vertex = ((vertexIndex % 6) + 6) % 6;
+            float angle = (90f - vertex * 60f) * Mathf.Deg2Rad;
+            return centers[tile] + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * HexRadius;
+        }
+
         public Terrain GetTerrain(int tileIndex)
         {
             return terrain[Mathf.Clamp(tileIndex, 0, terrain.Length - 1)];
@@ -771,6 +801,115 @@ namespace OldenTop
         public Resource GetSelectedResource(int tileIndex)
         {
             return selectedResources[Mathf.Clamp(tileIndex, 0, selectedResources.Length - 1)];
+        }
+
+        public bool HasResource(int tileIndex)
+        {
+            return tileIndex >= 0 && tileIndex < TileCount && resourcePresent[tileIndex];
+        }
+
+        public void RemoveResource(int tileIndex)
+        {
+            if (tileIndex < 0 || tileIndex >= TileCount)
+            {
+                return;
+            }
+
+            resourcePresent[tileIndex] = false;
+            if (tileObjects[tileIndex] != null)
+            {
+                tileObjects[tileIndex].name = $"Hex {tileIndex % Width:00},{tileIndex / Width:00} - " +
+                                              $"{terrain[tileIndex]} - No Resource";
+            }
+        }
+
+        public void RestoreResource(int tileIndex)
+        {
+            if (tileIndex < 0 || tileIndex >= TileCount)
+            {
+                return;
+            }
+
+            resourcePresent[tileIndex] = true;
+            if (tileObjects[tileIndex] != null)
+            {
+                tileObjects[tileIndex].name = $"Hex {tileIndex % Width:00},{tileIndex / Width:00} - " +
+                                              $"{terrain[tileIndex]} - " +
+                                              ResourceCatalog.GetLabel(selectedResources[tileIndex]);
+            }
+        }
+
+        public void SetTileHighlights(IReadOnlyList<int> tileIndices, Color color)
+        {
+            ClearTileHighlights();
+            Color highlightColor = new Color(color.r, color.g, color.b, 0.38f);
+            for (int i = 0; i < tileIndices.Count; i++)
+            {
+                int tile = tileIndices[i];
+                if (tile < 0 || tile >= tileHighlightRenderers.Length || tileHighlightRenderers[tile] == null)
+                {
+                    continue;
+                }
+
+                tileHighlightRenderers[tile].color = highlightColor;
+                tileHighlightRenderers[tile].enabled = true;
+            }
+        }
+
+        public void ClearTileHighlights()
+        {
+            for (int tile = 0; tile < tileHighlightRenderers.Length; tile++)
+            {
+                if (tileHighlightRenderers[tile] != null)
+                {
+                    tileHighlightRenderers[tile].enabled = false;
+                }
+            }
+        }
+
+        public void SetTileOccupancyOutline(int tileIndex, Color color)
+        {
+            if (tileIndex < 0 || tileIndex >= tileOccupancyOutlineRenderers.Length ||
+                tileOccupancyOutlineRenderers[tileIndex] == null)
+            {
+                return;
+            }
+
+            tileOccupancyOutlineRenderers[tileIndex].color = color;
+            tileOccupancyOutlineRenderers[tileIndex].enabled = true;
+        }
+
+        public void ClearTileOccupancyOutlines()
+        {
+            for (int tile = 0; tile < tileOccupancyOutlineRenderers.Length; tile++)
+            {
+                if (tileOccupancyOutlineRenderers[tile] != null)
+                {
+                    tileOccupancyOutlineRenderers[tile].enabled = false;
+                }
+            }
+        }
+
+        public int GetHexDistance(int firstTileIndex, int secondTileIndex)
+        {
+            if (firstTileIndex < 0 || firstTileIndex >= TileCount ||
+                secondTileIndex < 0 || secondTileIndex >= TileCount)
+            {
+                return int.MaxValue;
+            }
+
+            FromIndex(firstTileIndex, out int firstColumn, out int firstRow);
+            FromIndex(secondTileIndex, out int secondColumn, out int secondRow);
+
+            int firstX = firstColumn - (firstRow - (firstRow & 1)) / 2;
+            int firstZ = firstRow;
+            int firstY = -firstX - firstZ;
+            int secondX = secondColumn - (secondRow - (secondRow & 1)) / 2;
+            int secondZ = secondRow;
+            int secondY = -secondX - secondZ;
+
+            return Mathf.Max(Mathf.Abs(firstX - secondX),
+                Mathf.Abs(firstY - secondY), Mathf.Abs(firstZ - secondZ));
         }
 
         private int CountTerrain(Terrain value)
@@ -811,6 +950,25 @@ namespace OldenTop
             }
 
             return result;
+        }
+
+        private static bool[] CreateInitialResourcePresence()
+        {
+            bool[] result = new bool[TileCount];
+            for (int tile = 0; tile < result.Length; tile++)
+            {
+                result[tile] = true;
+            }
+
+            return result;
+        }
+
+        private void ResetResourcePresence()
+        {
+            for (int tile = 0; tile < resourcePresent.Length; tile++)
+            {
+                resourcePresent[tile] = true;
+            }
         }
 
         private float NextRange(float minimum, float maximum)
