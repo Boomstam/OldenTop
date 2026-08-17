@@ -145,6 +145,7 @@ After many turns, the board should visibly tell the history of the tribes. Prosp
 - A tribe should begin with a mixture of ages rather than only same-aged adults.
 - **Prototype decision (2026-08-16):** before their first assignment phase, each player places one permanent hearth on any non-water hex.
 - The hearth replaces and removes the existing site/resource on its hex.
+- **Prototype decision (2026-08-18):** during every assignment phase, assign wood from the tribe's stockpile to each hearth just as food is assigned to individual workers. A hearth without assigned wood goes out; remove it and restore the resource site that it displaced on that hex.
 - All of a tribe's workers begin on its hearth. Each season, every worker may remain on their starting hex or move **one hex-grid step**; their legal destinations are highlighted during placement.
 - A hex containing a hearth, building, or worker is occupied by that player and outlined in their color. The hex outline, rather than the piece icon, communicates ownership; icon outlines remain neutral translucent grey/black. Friendly pieces may share the hex, but the other player's workers may not enter it.
 - Every hex has exactly six peripheral content slots along the rays from its center toward each geometric vertex. Their outward position balances equal clearance from the center icon and the two neighboring hex edges. Workers and future features share this six-piece capacity.
@@ -491,7 +492,7 @@ During Year 3, the hidden **Eclipse Season** is also fixed for that year's Sprin
 2. **Divination/ritual phase**
    - Before assignments, eligible players may spend Sacrality to inspect hidden plans privately.
 3. **Commitment phase**
-   - Players place/commit people and assign their tasks, likely simultaneously.
+   - Players place/commit people, assign their tasks, and assign food to workers and wood to hearths, likely simultaneously.
 4. **Reveal and execution**
    - Reveal relevant Year, Season, and Eclipse information.
    - Resolve world changes and task modifiers.

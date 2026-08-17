@@ -345,6 +345,7 @@ namespace OldenTop
         private readonly bool[,] workerPlacedThisTurn = new bool[PlayerCount, WorkersPerPlayer];
         private readonly bool[,] workerAlive = new bool[PlayerCount, WorkersPerPlayer];
         private readonly int[,] assignedFood = new int[PlayerCount, WorkersPerPlayer];
+        private readonly bool[] assignedHearthFuel = new bool[PlayerCount];
         private readonly bool[] completedFirstTurn = new bool[PlayerCount];
         private readonly int[,] resourceStockpiles = new int[PlayerCount, ResourceTypeCount];
         private readonly int[,] latestSeasonGains = new int[PlayerCount, ResourceTypeCount];
@@ -401,6 +402,7 @@ namespace OldenTop
         public string Season => SeasonNames[seasonIndex];
         public bool IsResolutionPhase => resolutionPhase;
         public bool IsFoodAssignmentPhase => foodAssignmentPhase;
+        public bool IsActiveHearthFueled => foodAssignmentPhase && assignedHearthFuel[activePlayer];
         public bool IsPlacingHearth => !resolutionPhase && hearthTiles[activePlayer] < 0;
         private bool CanRecallActiveHearth => !completedFirstTurn[activePlayer] && hearthTiles[activePlayer] >= 0;
         public int SelectedWorker => selectedWorker;
@@ -537,7 +539,7 @@ namespace OldenTop
             string phaseText = resolutionPhase
                 ? "COMMITMENTS READY"
                 : foodAssignmentPhase
-                    ? $"PLAYER {activePlayer + 1} FEEDS WORKERS"
+                    ? $"PLAYER {activePlayer + 1} FEEDS & FUELS"
                 : IsPlacingHearth
                     ? $"PLAYER {activePlayer + 1} PLACES HEARTH"
                     : $"PLAYER {activePlayer + 1} ASSIGNS";
@@ -597,14 +599,14 @@ namespace OldenTop
                 if (foodAssignmentPhase)
                 {
                     if (GUI.Button(new Rect(x, Screen.height - 128f, contentWidth, 52f),
-                            "Clear food assignments", buttonStyle))
+                            "Clear food and fuel", buttonStyle))
                     {
-                        ClearActivePlayerFoodAssignments();
+                        ClearActivePlayerResourceAssignments();
                     }
 
                     GUI.backgroundColor = PlayerColors[activePlayer];
                     if (GUI.Button(new Rect(x, Screen.height - 68f, contentWidth, 52f),
-                            "End food assignment", buttonStyle))
+                            "Finish food and fuel", buttonStyle))
                     {
                         TryEndFoodAssignments();
                     }
@@ -763,7 +765,9 @@ namespace OldenTop
                 Vector2.Distance(foodPressPosition, current.mousePosition) >= DragThreshold)
             {
                 draggingFoodResource = pressedFoodResource;
-                statusMessage = "Drop the food onto one of your workers.";
+                statusMessage = draggingFoodResource == (int)Resource.Wood
+                    ? "Drop the wood onto your hearth."
+                    : "Drop the food onto one of your workers.";
                 current.Use();
                 return;
             }
@@ -771,13 +775,21 @@ namespace OldenTop
             if (current.type == EventType.MouseUp && current.button == 0 && draggingFoodResource >= 0)
             {
                 int resource = draggingFoodResource;
-                if (TryGetActiveWorkerAtGuiPosition(current.mousePosition, out int worker))
+                if (resource == (int)Resource.Wood &&
+                    TryGetActiveHearthAtGuiPosition(current.mousePosition))
+                {
+                    TryAssignWoodToActiveHearth();
+                }
+                else if (ResourceCatalog.IsFood((Resource)resource) &&
+                         TryGetActiveWorkerAtGuiPosition(current.mousePosition, out int worker))
                 {
                     TryAssignFoodToActiveWorker(worker, (Resource)resource);
                 }
                 else
                 {
-                    statusMessage = "Food assignment cancelled. Drop food onto one of your workers.";
+                    statusMessage = resource == (int)Resource.Wood
+                        ? "Wood assignment cancelled. Drop wood onto your hearth."
+                        : "Food assignment cancelled. Drop food onto one of your workers.";
                 }
 
                 ClearFoodPointerState();
@@ -905,14 +917,15 @@ namespace OldenTop
                 countRect.width, countRect.height), amount.ToString(), stockpileCountShadowStyle);
             GUI.Label(countRect, amount.ToString(), stockpileCountStyle);
 
-            bool foodSelection = foodAssignmentPhase && player == activePlayer && ResourceCatalog.IsFood(resource);
-            if (foodSelection && selectedFoodResource == (int)resource)
+            bool canAssignResource = foodAssignmentPhase && player == activePlayer &&
+                                     (ResourceCatalog.IsFood(resource) || resource == Resource.Wood);
+            if (canAssignResource && selectedFoodResource == (int)resource)
             {
                 DrawSelectedWorkerHighlight(rect, activePlayer);
             }
 
             Event current = Event.current;
-            if (foodSelection && current.type == EventType.MouseDown && current.button == 0 &&
+            if (canAssignResource && current.type == EventType.MouseDown && current.button == 0 &&
                 rect.Contains(current.mousePosition))
             {
                 BeginFoodPress(resource, current);
@@ -1206,6 +1219,16 @@ namespace OldenTop
             return false;
         }
 
+        private bool TryGetActiveHearthAtGuiPosition(Vector2 guiPoint)
+        {
+            if (mapCamera == null || hearthTiles[activePlayer] < 0)
+            {
+                return false;
+            }
+
+            return GetHearthGuiRect(activePlayer).Contains(guiPoint);
+        }
+
         private Vector3 GetWorkerSlotScreenPosition(int tile, int slot)
         {
             Vector3 center = mapCamera.WorldToScreenPoint(map.GetTileWorldPosition(tile));
@@ -1243,7 +1266,6 @@ namespace OldenTop
                 return;
             }
 
-            float markerSize = HearthMarkerSize * OccupiedTileIconScale;
             for (int player = 0; player < PlayerCount; player++)
             {
                 int tile = hearthTiles[player];
@@ -1258,8 +1280,7 @@ namespace OldenTop
                     continue;
                 }
 
-                Rect marker = new Rect(screen.x - markerSize * 0.5f,
-                    Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
+                Rect marker = GetHearthGuiRect(player);
                 Texture2D hearthIcon = HearthIconCatalog.GetIcon();
                 if (hearthIcon != null)
                 {
@@ -1270,11 +1291,31 @@ namespace OldenTop
                     GUI.Label(marker, "?", resourceFallbackStyle);
                 }
 
+                DrawAssignedHearthFuelOverlay(marker, player);
+
+                Event current = Event.current;
+                if (foodAssignmentPhase && player == activePlayer && current.type == EventType.MouseDown &&
+                    current.button == 0 && marker.Contains(current.mousePosition))
+                {
+                    TryAssignSelectedWoodToActiveHearth(current);
+                }
+
                 if (marker.Contains(Event.current.mousePosition))
                 {
-                    hoveredTooltip = $"Player {player + 1} hearth";
+                    hoveredTooltip = foodAssignmentPhase && player == activePlayer
+                        ? $"Player {player + 1} hearth • assign wood here"
+                        : $"Player {player + 1} hearth";
                 }
             }
+        }
+
+        private Rect GetHearthGuiRect(int player)
+        {
+            int tile = hearthTiles[player];
+            Vector3 screen = mapCamera.WorldToScreenPoint(map.GetTileWorldPosition(tile));
+            float markerSize = HearthMarkerSize * OccupiedTileIconScale;
+            return new Rect(screen.x - markerSize * 0.5f,
+                Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
         }
 
         private void DrawMapHeader()
@@ -1289,7 +1330,7 @@ namespace OldenTop
             GUI.Box(header, resolutionPhase
                 ? "All commitments are visible — advance when ready"
                 : foodAssignmentPhase
-                    ? $"Player {activePlayer + 1}: choose food, then assign it to every worker"
+                    ? $"Player {activePlayer + 1}: assign food to workers and wood to the hearth"
                 : IsPlacingHearth
                     ? $"Player {activePlayer + 1}: place your hearth on a non-water hex"
                     : $"Player {activePlayer + 1}: each worker may stay or move one tile",
@@ -1400,6 +1441,21 @@ namespace OldenTop
             Color previousColor = GUI.color;
             GUI.color = new Color(1f, 1f, 1f, 0.96f);
             DrawResourceIcon(foodRect, (Resource)food);
+            GUI.color = previousColor;
+        }
+
+        private void DrawAssignedHearthFuelOverlay(Rect hearthRect, int player)
+        {
+            if (!foodAssignmentPhase || !assignedHearthFuel[player])
+            {
+                return;
+            }
+
+            float size = hearthRect.width * 0.48f;
+            Rect fuelRect = new Rect(hearthRect.xMax - size, hearthRect.yMax - size, size, size);
+            Color previousColor = GUI.color;
+            GUI.color = new Color(1f, 1f, 1f, 0.96f);
+            DrawResourceIcon(fuelRect, Resource.Wood);
             GUI.color = previousColor;
         }
 
@@ -1734,6 +1790,16 @@ namespace OldenTop
                 : -1;
         }
 
+        public int GetHearthTile(int player)
+        {
+            return player >= 0 && player < PlayerCount ? hearthTiles[player] : -1;
+        }
+
+        public bool IsHearthFueled(int player)
+        {
+            return foodAssignmentPhase && player >= 0 && player < PlayerCount && assignedHearthFuel[player];
+        }
+
         public bool IsWorkerAlive(int player, int worker)
         {
             return player >= 0 && player < PlayerCount && worker >= 0 && worker < WorkersPerPlayer &&
@@ -1782,11 +1848,42 @@ namespace OldenTop
             return true;
         }
 
+        public bool TryAssignWoodToActiveHearth()
+        {
+            if (!foodAssignmentPhase || hearthTiles[activePlayer] < 0)
+            {
+                return false;
+            }
+
+            if (assignedHearthFuel[activePlayer])
+            {
+                statusMessage = "This hearth already has wood assigned.";
+                return false;
+            }
+
+            int woodIndex = (int)Resource.Wood;
+            if (resourceStockpiles[activePlayer, woodIndex] <= 0)
+            {
+                statusMessage = "No Wood remains in this stockpile.";
+                return false;
+            }
+
+            resourceStockpiles[activePlayer, woodIndex]--;
+            assignedHearthFuel[activePlayer] = true;
+            selectedFoodResource = woodIndex;
+            statusMessage = "Assigned Wood to the hearth.";
+            return true;
+        }
+
         private void TryAssignSelectedFoodToActiveWorker(int worker, Event current)
         {
             if (selectedFoodResource < 0)
             {
                 statusMessage = "Select a food stockpile first.";
+            }
+            else if (!ResourceCatalog.IsFood((Resource)selectedFoodResource))
+            {
+                statusMessage = "Wood can only be assigned to your hearth.";
             }
             else
             {
@@ -1796,9 +1893,29 @@ namespace OldenTop
             current.Use();
         }
 
+        private void TryAssignSelectedWoodToActiveHearth(Event current)
+        {
+            if (selectedFoodResource != (int)Resource.Wood)
+            {
+                statusMessage = "Select Wood from your stockpile first.";
+            }
+            else
+            {
+                TryAssignWoodToActiveHearth();
+            }
+
+            current.Use();
+        }
+
         private void BeginFoodPress(Resource food, Event current)
         {
             int foodIndex = (int)food;
+            if (!ResourceCatalog.IsFood(food) && food != Resource.Wood)
+            {
+                current.Use();
+                return;
+            }
+
             if (resourceStockpiles[activePlayer, foodIndex] <= 0)
             {
                 statusMessage = $"No {ResourceCatalog.GetLabel(food)} remains in this stockpile.";
@@ -1809,7 +1926,9 @@ namespace OldenTop
             selectedFoodResource = foodIndex;
             pressedFoodResource = foodIndex;
             foodPressPosition = current.mousePosition;
-            statusMessage = $"{ResourceCatalog.GetLabel(food)} selected. Click or drag it onto a worker.";
+            statusMessage = food == Resource.Wood
+                ? "Wood selected. Click or drag it onto your hearth."
+                : $"{ResourceCatalog.GetLabel(food)} selected. Click or drag it onto a worker.";
             current.Use();
         }
 
@@ -1875,6 +1994,8 @@ namespace OldenTop
                 assignedFood[activePlayer, worker] = -1;
             }
 
+            bool hearthWentOut = ExtinguishUnfueledActiveHearth();
+
             ancestorCounts[activePlayer] += deaths;
             ClearFoodInteraction();
             UpdateOccupiedTileOutlines();
@@ -1882,7 +2003,9 @@ namespace OldenTop
             if (activePlayer < PlayerCount - 1)
             {
                 activePlayer++;
-                statusMessage = $"Player {activePlayer + 1}: assign one food to every worker.";
+                statusMessage = hearthWentOut
+                    ? $"The hearth went out. Player {activePlayer + 1}: assign food and wood."
+                    : $"Player {activePlayer + 1}: assign food to workers and wood to the hearth.";
                 return;
             }
 
@@ -1898,7 +2021,22 @@ namespace OldenTop
             BeginActivePlayerAssignments();
         }
 
-        private void ClearActivePlayerFoodAssignments()
+        private bool ExtinguishUnfueledActiveHearth()
+        {
+            int hearthTile = hearthTiles[activePlayer];
+            bool wasFueled = assignedHearthFuel[activePlayer];
+            assignedHearthFuel[activePlayer] = false;
+            if (hearthTile < 0 || wasFueled)
+            {
+                return false;
+            }
+
+            hearthTiles[activePlayer] = -1;
+            map?.RestoreResource(hearthTile);
+            return true;
+        }
+
+        private void ClearActivePlayerResourceAssignments()
         {
             if (!foodAssignmentPhase)
             {
@@ -1915,8 +2053,14 @@ namespace OldenTop
                 }
             }
 
+            if (assignedHearthFuel[activePlayer])
+            {
+                resourceStockpiles[activePlayer, (int)Resource.Wood]++;
+                assignedHearthFuel[activePlayer] = false;
+            }
+
             selectedFoodResource = -1;
-            statusMessage = "Food assignments cleared. Choose a stockpile to assign food again.";
+            statusMessage = "Food and fuel assignments cleared. Choose a stockpile to assign again.";
         }
 
         private void BeginFoodAssignments()
@@ -1926,13 +2070,14 @@ namespace OldenTop
             ClearFoodInteraction();
             for (int player = 0; player < PlayerCount; player++)
             {
+                assignedHearthFuel[player] = false;
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
                     assignedFood[player, worker] = -1;
                 }
             }
 
-            statusMessage = "Player 1: assign one food item to every worker.";
+            statusMessage = "Player 1: assign food to every worker and Wood to the hearth.";
         }
 
         private void DrawFoodShortageDialog()
@@ -2258,6 +2403,7 @@ namespace OldenTop
                 }
 
                 completedFirstTurn[player] = false;
+                assignedHearthFuel[player] = false;
             }
         }
 

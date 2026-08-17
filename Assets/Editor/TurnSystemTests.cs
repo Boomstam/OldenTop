@@ -170,6 +170,93 @@ namespace OldenTop.Tests
         }
 
         [Test]
+        public void HearthFuelAssignment_ConsumesWoodAndKeepsTheHearthLit()
+        {
+            map.Generate("hearth-fuel-test");
+            int woodTile = FindTileWithResource(Resource.Wood);
+            int playerOneHearth = FindAdjacentLandTile(woodTile);
+            int playerTwoHearth = FindLandTileOtherThan(playerOneHearth);
+
+            Assert.That(playerOneHearth, Is.GreaterThanOrEqualTo(0));
+            Assert.That(playerTwoHearth, Is.GreaterThanOrEqualTo(0));
+            Assert.That(turnSystem.TryPlaceActiveHearth(playerOneHearth), Is.True);
+            for (int worker = 0; worker < 4; worker++)
+            {
+                Assert.That(turnSystem.TryAssignActiveWorker(worker, woodTile), Is.True);
+            }
+            turnSystem.EndAssignments();
+
+            Assert.That(turnSystem.TryPlaceActiveHearth(playerTwoHearth), Is.True);
+            turnSystem.EndAssignments();
+
+            Assert.That(turnSystem.GetStockpileAmount(0, Resource.Wood), Is.EqualTo(4));
+            Assert.That(turnSystem.TryAssignWoodToActiveHearth(), Is.True);
+            Assert.That(turnSystem.GetStockpileAmount(0, Resource.Wood), Is.EqualTo(3));
+            Assert.That(turnSystem.IsHearthFueled(0), Is.True);
+            Assert.That(turnSystem.GetHearthTile(0), Is.EqualTo(playerOneHearth));
+        }
+
+        [Test]
+        public void UnfueledHearth_GoesOutAndRestoresItsResourceSite()
+        {
+            const int playerOneHearth = 0;
+            Assert.That(map.HasResource(playerOneHearth), Is.True);
+            Assert.That(turnSystem.TryPlaceActiveHearth(playerOneHearth), Is.True);
+            Assert.That(map.HasResource(playerOneHearth), Is.False);
+            turnSystem.EndAssignments();
+
+            Assert.That(turnSystem.TryPlaceActiveHearth(21), Is.True);
+            turnSystem.EndAssignments();
+
+            turnSystem.TryEndFoodAssignments();
+            Assert.That(turnSystem.IsFoodShortageDialogVisible, Is.True);
+            turnSystem.ConfirmFoodShortage();
+
+            Assert.That(turnSystem.GetHearthTile(0), Is.EqualTo(-1));
+            Assert.That(map.HasResource(playerOneHearth), Is.True);
+        }
+
+        private int FindTileWithResource(Resource resource)
+        {
+            for (int tile = 0; tile < map.GeneratedTileCount; tile++)
+            {
+                if (map.HasResource(tile) && map.GetSelectedResource(tile) == resource)
+                {
+                    return tile;
+                }
+            }
+
+            return -1;
+        }
+
+        private int FindAdjacentLandTile(int tile)
+        {
+            for (int candidate = 0; candidate < map.GeneratedTileCount; candidate++)
+            {
+                if (map.GetTerrain(candidate) != Terrain.Water &&
+                    map.GetHexDistance(tile, candidate) == 1)
+                {
+                    return candidate;
+                }
+            }
+
+            return -1;
+        }
+
+        private int FindLandTileOtherThan(int excludedTile)
+        {
+            for (int tile = 0; tile < map.GeneratedTileCount; tile++)
+            {
+                if (tile != excludedTile && map.GetTerrain(tile) != Terrain.Water)
+                {
+                    return tile;
+                }
+            }
+
+            return -1;
+        }
+
+        [Test]
         public void WorkerIconCatalog_AllPlayerIconsCanBeLoaded()
         {
             for (int player = 0; player < 2; player++)
