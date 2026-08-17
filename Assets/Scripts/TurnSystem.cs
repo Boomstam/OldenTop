@@ -324,6 +324,9 @@ namespace OldenTop
         private const float HearthMarkerSize = 38f;
         private const int WorkerMoveRange = 1;
         private const int TileContentSlotCount = 6;
+        private const int TopWorkerSlot = 0;
+        private const int BottomRightWorkerSlot = 2;
+        private const int BottomLeftWorkerSlot = 4;
         private const float HexEdgeNormalProjection = 0.8660254f;
         private const float MaximumZoomedResourceIconScale = 2f;
         private const float ZoomStepMultiplier = 0.85f;
@@ -1063,7 +1066,7 @@ namespace OldenTop
                 int tile = highlightedTiles[tileIndex];
                 for (int slot = 0; slot < TileContentSlotCount; slot++)
                 {
-                    if (IsTileSlotOccupied(tile, slot))
+                    if (!IsWorkerSlotAllowedOnTile(tile, slot) || IsTileSlotOccupied(tile, slot))
                     {
                         continue;
                     }
@@ -1094,7 +1097,8 @@ namespace OldenTop
                 int candidateTile = highlightedTiles[tileIndex];
                 for (int candidateSlot = 0; candidateSlot < TileContentSlotCount; candidateSlot++)
                 {
-                    if (IsTileSlotOccupied(candidateTile, candidateSlot) ||
+                    if (!IsWorkerSlotAllowedOnTile(candidateTile, candidateSlot) ||
+                        IsTileSlotOccupied(candidateTile, candidateSlot) ||
                         !GetPlacementSlotGuiRect(candidateTile, candidateSlot).Contains(guiPoint))
                     {
                         continue;
@@ -1525,7 +1529,7 @@ namespace OldenTop
         {
             if (resolutionPhase || map == null || worker < 0 || worker >= WorkersPerPlayer ||
                 tile < 0 || tile >= map.GeneratedTileCount ||
-                slot < 0 || slot >= TileContentSlotCount || IsPlacingHearth || foodAssignmentPhase ||
+                !IsWorkerSlotAllowedOnTile(tile, slot) || IsPlacingHearth || foodAssignmentPhase ||
                 !workerAlive[activePlayer, worker])
             {
                 return false;
@@ -2309,13 +2313,28 @@ namespace OldenTop
         {
             for (int slot = 0; slot < TileContentSlotCount; slot++)
             {
-                if (!IsTileSlotOccupied(tile, slot))
+                if (IsWorkerSlotAllowedOnTile(tile, slot) && !IsTileSlotOccupied(tile, slot))
                 {
                     return slot;
                 }
             }
 
             return -1;
+        }
+
+        private bool IsWorkerSlotAllowedOnTile(int tile, int slot)
+        {
+            if (slot < 0 || slot >= TileContentSlotCount)
+            {
+                return false;
+            }
+
+            // Hearths replace their resource and retain all six peripheral slots.
+            // Resource tiles expose only the top and two lower-corner worker slots.
+            return !map.HasResource(tile) ||
+                   slot == TopWorkerSlot ||
+                   slot == BottomRightWorkerSlot ||
+                   slot == BottomLeftWorkerSlot;
         }
 
         private bool IsTileSlotOccupied(int tile, int slot)
