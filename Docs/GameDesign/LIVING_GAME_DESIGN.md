@@ -149,6 +149,7 @@ After many turns, the board should visibly tell the history of the tribes. Prosp
 - A hex containing a hearth, building, or worker is occupied by that player and outlined in their color. The hex outline, rather than the piece icon, communicates ownership; icon outlines remain neutral translucent grey/black. Friendly pieces may share the hex, but the other player's workers may not enter it.
 - Every hex has exactly six peripheral content slots along the rays from its center toward each geometric vertex. Their outward position balances equal clearance from the center icon and the two neighboring hex edges. Workers and future features share this six-piece capacity.
 - Workers are visually unnumbered and interchangeable. Selecting one reveals neutral circular markers for every empty legal slot; clicking or dragging onto a marker chooses that exact slot, while occupied slots remain hidden.
+- Worker icons remain fixed-size when selected; selection is communicated by a pulsing player-color-to-white ring. Peripheral worker positions sit two screen pixels inward from their edge-balanced slot positions to prevent icon/hex-edge overlap.
 - The hearth is a special center piece and does not consume one of those six slots. Extending that center-piece exception to future buildings is a likely direction, but remains open until buildings are implemented.
 - At full zoom-in, resources, hearths, and workers use their original large icon sizes, with workers slightly smaller than resources. While zooming out, occupied resources, workers, and hearths shrink on screen with their tile so their tile-relative footprint stays equal to the full-zoom-in composition. Empty resources retain the original readability scaling, making them larger relative to their zoomed-out tile; that scaling returns when the last occupying piece leaves.
 - Roads, boats, river crossings, and other ways to extend or alter this one-tile seasonal movement remain an **open question**.
@@ -394,6 +395,9 @@ Taxonomy and historical relationships require later research. Known cautions fro
 ### 6.1 Four-season cycle
 
 Every turn is one season, cycling:
+
+- **Prototype decision (2026-08-16):** when a season advances, each worker standing on a resource site adds exactly one unit of that site's resource to their player's stockpile. Multiple workers gather independently, and resource sites are not depleted by this baseline prototype action.
+- Each season advance presents a short modal summary of what every player gathered before assignment interaction continues. Zero-count stockpile resources remain visible but use a disabled grey treatment.
 
 **Spring → Summer → Autumn → Winter**
 

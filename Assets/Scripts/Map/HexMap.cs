@@ -96,6 +96,7 @@ namespace OldenTop
         {
             const int textureWidth = 128;
             const int textureHeight = 148;
+            const float outlineWidth = 0.086f;
             Texture2D texture = new Texture2D(textureWidth, textureHeight, TextureFormat.RGBA32, false)
             {
                 name = outlineOnly ? "Runtime Pointy Hex Outline" : "Runtime Pointy Hex",
@@ -120,13 +121,20 @@ namespace OldenTop
                     float diagonalDistance = 1f - absX / 1.7320508f - absY;
                     float insideDistance = Mathf.Min(sideDistance, diagonalDistance);
 
-                    if (insideDistance < 0f || (outlineOnly && insideDistance >= 0.086f))
+                    if (insideDistance < 0f || (outlineOnly && insideDistance >= outlineWidth))
                     {
                         pixels[y * textureWidth + x] = new Color32(0, 0, 0, 0);
                     }
+                    else if (outlineOnly)
+                    {
+                        float inwardProgress = Mathf.Clamp01(insideDistance / outlineWidth);
+                        float alpha = 1f - Mathf.SmoothStep(0f, 1f, inwardProgress);
+                        pixels[y * textureWidth + x] = new Color32(255, 255, 255,
+                            (byte)Mathf.RoundToInt(alpha * 255f));
+                    }
                     else
                     {
-                        byte shade = outlineOnly || insideDistance >= 0.035f ? (byte)255 : (byte)155;
+                        byte shade = insideDistance >= 0.035f ? (byte)255 : (byte)155;
                         pixels[y * textureWidth + x] = new Color32(shade, shade, shade, 255);
                     }
                 }
@@ -635,12 +643,19 @@ namespace OldenTop
                     tileObjects[index] = tileObject;
                     tileObject.transform.SetParent(tileRoot, false);
                     tileObject.transform.localPosition = centers[index];
-                    tileObject.transform.localScale = new Vector3(0.982f, 0.982f, 1f);
+                    tileObject.transform.localScale = Vector3.one;
 
                     SpriteRenderer renderer = tileObject.AddComponent<SpriteRenderer>();
                     renderer.sprite = hexSprite;
                     renderer.color = GetTerrainColor(terrain[index]);
                     renderer.sortingOrder = 0;
+
+                    GameObject edgeObject = new GameObject("White Edge");
+                    edgeObject.transform.SetParent(tileObject.transform, false);
+                    SpriteRenderer edge = edgeObject.AddComponent<SpriteRenderer>();
+                    edge.sprite = hexOutlineSprite;
+                    edge.color = Color.white;
+                    edge.sortingOrder = 1;
 
                     GameObject highlightObject = new GameObject("Placement Highlight");
                     highlightObject.transform.SetParent(tileObject.transform, false);

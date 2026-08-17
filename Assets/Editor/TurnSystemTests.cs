@@ -8,6 +8,7 @@ namespace OldenTop.Tests
         private GameObject root;
         private TurnSystem turnSystem;
         private Camera mapCamera;
+        private HexMap map;
 
         [SetUp]
         public void SetUp()
@@ -16,7 +17,7 @@ namespace OldenTop.Tests
             mapCamera = root.AddComponent<Camera>();
             mapCamera.orthographic = true;
             mapCamera.orthographicSize = 10f;
-            HexMap map = root.AddComponent<HexMap>();
+            map = root.AddComponent<HexMap>();
             turnSystem = root.AddComponent<TurnSystem>();
             turnSystem.Initialize(map, mapCamera);
         }
@@ -86,6 +87,32 @@ namespace OldenTop.Tests
                 Assert.That(ResourceCatalog.GetIcon(resource), Is.Not.Null,
                     $"Missing icon at Resources/{ResourceCatalog.GetIconResourcePath(resource)}");
             }
+        }
+
+        [Test]
+        public void AdvancingSeason_AddsOneResourcePerAssignedWorkerToEachPlayersStockpile()
+        {
+            Assert.That(turnSystem.TryPlaceActiveHearth(0), Is.True);
+            Assert.That(turnSystem.TryAssignActiveWorker(0, 1), Is.True);
+            Assert.That(turnSystem.TryAssignActiveWorker(1, 1), Is.True);
+            turnSystem.EndAssignments();
+
+            Assert.That(turnSystem.TryPlaceActiveHearth(21), Is.True);
+            Assert.That(turnSystem.TryAssignActiveWorker(0, 22), Is.True);
+            turnSystem.EndAssignments();
+
+            Resource playerOneResource = map.GetSelectedResource(1);
+            Resource playerTwoResource = map.GetSelectedResource(22);
+            turnSystem.AdvanceSeason();
+
+            Assert.That(turnSystem.GetStockpileAmount(0, playerOneResource), Is.EqualTo(2));
+            Assert.That(turnSystem.GetStockpileAmount(1, playerTwoResource), Is.EqualTo(1));
+            Assert.That(turnSystem.GetLatestSeasonGain(0, playerOneResource), Is.EqualTo(2));
+            Assert.That(turnSystem.GetLatestSeasonGain(1, playerTwoResource), Is.EqualTo(1));
+            Assert.That(turnSystem.IsSeasonGainsDialogVisible, Is.True);
+
+            turnSystem.DismissSeasonGainsDialog();
+            Assert.That(turnSystem.IsSeasonGainsDialogVisible, Is.False);
         }
 
         [Test]

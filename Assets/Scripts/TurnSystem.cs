@@ -292,9 +292,13 @@ namespace OldenTop
         private const float PanelFraction = 0.25f;
         private const float DragThreshold = 6f;
         private const float ResourceIconSize = 42f;
+        private const float StockpileResourceIconSize = 56f;
+        private const float StockpilePlayerLabelGap = 8f;
+        private const int ResourceTypeCount = 8;
         private const float InventoryWorkerIconSize = 48f;
         private const float MapWorkerIconSize = 32f;
-        private const float SelectedMapWorkerIconSize = 40f;
+        private const float WorkerEdgeInsetPixels = 2f;
+        private const float SelectionPulseSpeed = 4.25f;
         private const float HearthMarkerSize = 38f;
         private const int WorkerMoveRange = 1;
         private const int TileContentSlotCount = 6;
@@ -318,6 +322,8 @@ namespace OldenTop
         private readonly int[,] turnStartSlots = new int[PlayerCount, WorkersPerPlayer];
         private readonly bool[,] workerPlacedThisTurn = new bool[PlayerCount, WorkersPerPlayer];
         private readonly bool[] completedFirstTurn = new bool[PlayerCount];
+        private readonly int[,] resourceStockpiles = new int[PlayerCount, ResourceTypeCount];
+        private readonly int[,] latestSeasonGains = new int[PlayerCount, ResourceTypeCount];
         private readonly int[] hearthTiles = { -1, -1 };
         private readonly List<int> highlightedTiles = new List<int>(7);
         private readonly List<int>[] occupiedTilesByPlayer =
@@ -337,6 +343,9 @@ namespace OldenTop
         private Vector2 workerPressPosition;
         private float fittedCameraSize = 1f;
         private bool resolutionPhase;
+        private bool showSeasonGainsDialog;
+        private string resolvedSeasonName;
+        private int resolvedYear;
         private string statusMessage = "Player 1: place your hearth on any non-water hex.";
 
         private GUIStyle panelStyle;
@@ -344,8 +353,13 @@ namespace OldenTop
         private GUIStyle headingStyle;
         private GUIStyle bodyStyle;
         private GUIStyle smallBodyStyle;
+        private GUIStyle buttonStyle;
         private GUIStyle zoomButtonStyle;
         private GUIStyle resourceFallbackStyle;
+        private GUIStyle stockpileCountStyle;
+        private GUIStyle stockpileCountShadowStyle;
+        private GUIStyle dialogTitleStyle;
+        private GUIStyle dialogStyle;
         private GUIStyle tooltipStyle;
         private Texture2D iconOutlineTexture;
         private string hoveredTooltip;
@@ -401,6 +415,9 @@ namespace OldenTop
             fittedCameraSize = mapCamera != null ? mapCamera.orthographicSize : 1f;
             ClearHearths();
             ClearAssignments();
+            ClearStockpiles();
+            ClearLatestSeasonGains();
+            showSeasonGainsDialog = false;
             ClearWorkerInteraction();
             map?.ClearTileHighlights();
             map?.ClearTileOccupancyOutlines();
@@ -424,21 +441,33 @@ namespace OldenTop
 
             EnsureStyles();
             hoveredTooltip = null;
+            bool previousGuiEnabled = GUI.enabled;
+            GUI.enabled = !showSeasonGainsDialog;
             DrawTileResourceIcons();
             DrawHearthsOnMap();
             DrawPlacementSlotsOnMap();
             DrawAssignmentsOnMap();
             DrawMapHeader();
             DrawInventoryPanel();
-            HandleZoomInput(Event.current);
-            HandlePointerInteraction(Event.current);
+            GUI.enabled = previousGuiEnabled;
 
-            if (draggingWorker >= 0)
+            if (showSeasonGainsDialog)
             {
-                DrawDragGhost(Event.current.mousePosition);
+                hoveredTooltip = null;
+                DrawSeasonGainsDialog();
             }
+            else
+            {
+                HandleZoomInput(Event.current);
+                HandlePointerInteraction(Event.current);
 
-            DrawTooltip(Event.current.mousePosition);
+                if (draggingWorker >= 0)
+                {
+                    DrawDragGhost(Event.current.mousePosition);
+                }
+
+                DrawTooltip(Event.current.mousePosition);
+            }
         }
 
         private void DrawInventoryPanel()
@@ -455,10 +484,10 @@ namespace OldenTop
             float contentWidth = width - 36f;
             float y = 18f;
 
-            GUI.Label(new Rect(x, y, contentWidth, 34f), "OLDEN TOP", titleStyle);
-            y += 38f;
-            GUI.Label(new Rect(x, y, contentWidth, 24f), $"Year {year}  •  {SeasonNames[seasonIndex]}", headingStyle);
-            y += 30f;
+            GUI.Label(new Rect(x, y, contentWidth, 58f), "OLDEN TOP", titleStyle);
+            y += 66f;
+            GUI.Label(new Rect(x, y, contentWidth, 42f), $"Year {year}  •  {SeasonNames[seasonIndex]}", headingStyle);
+            y += 48f;
 
             string phaseText = resolutionPhase
                 ? "COMMITMENTS READY"
@@ -467,37 +496,28 @@ namespace OldenTop
                     : $"PLAYER {activePlayer + 1} ASSIGNS";
             Color previousColor = GUI.color;
             GUI.color = resolutionPhase ? Color.white : PlayerColors[activePlayer];
-            GUI.Label(new Rect(x, y, contentWidth, 30f), phaseText, headingStyle);
+            GUI.Label(new Rect(x, y, contentWidth, 48f), phaseText, headingStyle);
             GUI.color = previousColor;
-            y += 38f;
+            y += 58f;
 
-            GUI.Label(new Rect(x, y, contentWidth, 42f), statusMessage, bodyStyle);
-            y += 49f;
+            GUI.Label(new Rect(x, y, contentWidth, 86f), statusMessage, bodyStyle);
+            y += 94f;
 
-            GUI.Label(new Rect(x, y, contentWidth, 24f), "TILE RESOURCE OPTIONS", headingStyle);
-            y += 26f;
-            for (int terrainIndex = 0; terrainIndex < 4; terrainIndex++)
+            GUI.Label(new Rect(x, y, contentWidth, 42f), "STOCKPILES", headingStyle);
+            y += 46f;
+            for (int player = 0; player < PlayerCount; player++)
             {
-                Terrain terrain = (Terrain)terrainIndex;
-                Resource[] options = ResourceCatalog.GetOptions(terrain);
-                GUI.Label(new Rect(x + 8f, y, 86f, 45f), $"{terrain}:", smallBodyStyle);
-                for (int option = 0; option < options.Length; option++)
-                {
-                    DrawResourceIcon(new Rect(x + 94f + option * 49f, y + 1f,
-                        ResourceIconSize, ResourceIconSize), options[option]);
-                }
-
-                y += 46f;
+                y += DrawPlayerStockpile(x + 8f, y, contentWidth - 8f, player);
             }
 
-            y += 8f;
-            GUI.Label(new Rect(x, y, contentWidth, 24f),
+            y += 14f;
+            GUI.Label(new Rect(x, y, contentWidth, 42f),
                 IsPlacingHearth ? "STARTING HEARTH" : "WORKERS", headingStyle);
-            y += 29f;
+            y += 48f;
 
             if (IsPlacingHearth)
             {
-                GUI.Label(new Rect(x, y, contentWidth, 88f),
+                GUI.Label(new Rect(x, y, contentWidth, 140f),
                     "Click any non-water hex to place your permanent hearth. All workers begin there.",
                     bodyStyle);
             }
@@ -517,13 +537,13 @@ namespace OldenTop
                 string recallLabel = CanRecallActiveHearth
                     ? "Recall workers and hearth"
                     : "Reset this player's worker moves";
-                if (GUI.Button(new Rect(x, Screen.height - 94f, contentWidth, 30f), recallLabel))
+                if (GUI.Button(new Rect(x, Screen.height - 128f, contentWidth, 52f), recallLabel, buttonStyle))
                 {
                     RecallActivePlayerPieces();
                 }
 
                 GUI.backgroundColor = PlayerColors[activePlayer];
-                if (GUI.Button(new Rect(x, Screen.height - 54f, contentWidth, 36f), "End assignments"))
+                if (GUI.Button(new Rect(x, Screen.height - 68f, contentWidth, 52f), "End assignments", buttonStyle))
                 {
                     EndAssignments();
                 }
@@ -532,11 +552,11 @@ namespace OldenTop
             }
             else
             {
-                GUI.Label(new Rect(x, y, contentWidth, 65f),
+                GUI.Label(new Rect(x, y, contentWidth, 110f),
                     "Both players have committed. Workers remain on the map until the next season begins.", bodyStyle);
                 string nextSeason = SeasonNames[(seasonIndex + 1) % SeasonNames.Length];
                 GUI.backgroundColor = new Color32(139, 187, 114, 255);
-                if (GUI.Button(new Rect(x, Screen.height - 60f, contentWidth, 42f), $"Begin {nextSeason}"))
+                if (GUI.Button(new Rect(x, Screen.height - 72f, contentWidth, 56f), $"Begin {nextSeason}", buttonStyle))
                 {
                     AdvanceSeason();
                 }
@@ -550,11 +570,8 @@ namespace OldenTop
             bool placedThisTurn = workerPlacedThisTurn[activePlayer, worker];
             bool selected = selectedWorker == worker;
 
-            float selectionExpansion = selected ? 3f : 0f;
-            Rect iconRect = new Rect(rect.x - selectionExpansion, rect.y - selectionExpansion,
-                rect.width + selectionExpansion * 2f, rect.height + selectionExpansion * 2f);
-            DrawWorkerIcon(iconRect, activePlayer, placedThisTurn,
-                placedThisTurn ? "placed this turn" : "ready to move");
+            DrawWorkerIcon(rect, activePlayer, placedThisTurn,
+                placedThisTurn ? "placed this turn" : "ready to move", selected);
 
             Event current = Event.current;
             if (current.type == EventType.MouseDown && current.button == 0 && rect.Contains(current.mousePosition))
@@ -706,6 +723,141 @@ namespace OldenTop
             }
         }
 
+        private float DrawPlayerStockpile(float x, float y, float width, int player)
+        {
+            const float headingHeight = 30f;
+            const float horizontalGap = 10f;
+            const float verticalGap = 6f;
+            Color previousColor = GUI.color;
+            GUI.color = PlayerColors[player];
+            GUI.Label(new Rect(x, y, width, headingHeight), $"PLAYER {player + 1}", smallBodyStyle);
+            GUI.color = previousColor;
+
+            for (int resourceIndex = 0; resourceIndex < ResourceTypeCount; resourceIndex++)
+            {
+                int column = resourceIndex % 4;
+                int row = resourceIndex / 4;
+                Rect iconRect = new Rect(
+                    x + column * (StockpileResourceIconSize + horizontalGap),
+                    y + headingHeight + StockpilePlayerLabelGap +
+                    row * (StockpileResourceIconSize + verticalGap),
+                    StockpileResourceIconSize,
+                    StockpileResourceIconSize);
+                DrawStockpileResourceIcon(iconRect, (Resource)resourceIndex,
+                    resourceStockpiles[player, resourceIndex]);
+            }
+
+            return headingHeight + StockpilePlayerLabelGap +
+                   (StockpileResourceIconSize + verticalGap) * 2f + 8f;
+        }
+
+        private void DrawStockpileResourceIcon(Rect rect, Resource resource, int amount)
+        {
+            Color previousColor = GUI.color;
+            if (amount == 0)
+            {
+                GUI.color = new Color(0.42f, 0.42f, 0.42f, 0.48f);
+            }
+
+            DrawResourceIcon(rect, resource);
+            Rect countRect = new Rect(
+                rect.x + rect.width * 0.34f,
+                rect.y + rect.height * 0.34f,
+                rect.width * 0.58f,
+                rect.height * 0.58f);
+            GUI.Label(new Rect(countRect.x + 1.5f, countRect.y + 1.5f,
+                countRect.width, countRect.height), amount.ToString(), stockpileCountShadowStyle);
+            GUI.Label(countRect, amount.ToString(), stockpileCountStyle);
+            GUI.color = previousColor;
+        }
+
+        private void DrawSeasonGainsDialog()
+        {
+            Color previousColor = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.52f);
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height),
+                Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = previousColor;
+
+            float width = Mathf.Min(680f, Screen.width - 40f);
+            float height = Mathf.Min(430f, Screen.height - 40f);
+            Rect dialog = new Rect((Screen.width - width) * 0.5f,
+                (Screen.height - height) * 0.5f, width, height);
+            GUI.color = new Color32(20, 22, 20, 248);
+            GUI.DrawTexture(dialog, Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = previousColor;
+            GUI.Box(dialog, GUIContent.none, dialogStyle);
+
+            float x = dialog.x + 28f;
+            float y = dialog.y + 18f;
+            float contentWidth = dialog.width - 56f;
+            GUI.Label(new Rect(x, y, contentWidth, 48f),
+                $"{resolvedSeasonName.ToUpperInvariant()} GAINS", dialogTitleStyle);
+            y += 48f;
+            GUI.Label(new Rect(x, y, contentWidth, 32f),
+                $"Year {resolvedYear} season results", smallBodyStyle);
+            y += 42f;
+
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                y += DrawSeasonGainsPlayer(x, y, contentWidth, player);
+            }
+
+            if (GUI.Button(new Rect(x, dialog.yMax - 70f, contentWidth, 48f), "Continue", buttonStyle))
+            {
+                DismissSeasonGainsDialog();
+            }
+
+            Event current = Event.current;
+            if (current.type == EventType.KeyDown &&
+                (current.keyCode == KeyCode.Return || current.keyCode == KeyCode.Escape))
+            {
+                DismissSeasonGainsDialog();
+                current.Use();
+            }
+        }
+
+        private float DrawSeasonGainsPlayer(float x, float y, float width, int player)
+        {
+            const float headingHeight = 30f;
+            const float iconSize = 56f;
+            const float iconGap = 10f;
+            Color previousColor = GUI.color;
+            GUI.color = PlayerColors[player];
+            GUI.Label(new Rect(x, y, width, headingHeight), $"PLAYER {player + 1}", smallBodyStyle);
+            GUI.color = previousColor;
+
+            int drawnResources = 0;
+            for (int resourceIndex = 0; resourceIndex < ResourceTypeCount; resourceIndex++)
+            {
+                int amount = latestSeasonGains[player, resourceIndex];
+                if (amount <= 0)
+                {
+                    continue;
+                }
+
+                Rect iconRect = new Rect(x + drawnResources * (iconSize + iconGap),
+                    y + headingHeight + 6f, iconSize, iconSize);
+                DrawResourceIcon(iconRect, (Resource)resourceIndex);
+                Rect countRect = new Rect(iconRect.x + iconRect.width * 0.28f,
+                    iconRect.y + iconRect.height * 0.34f,
+                    iconRect.width * 0.64f, iconRect.height * 0.58f);
+                string amountText = $"+{amount}";
+                GUI.Label(new Rect(countRect.x + 1.5f, countRect.y + 1.5f,
+                    countRect.width, countRect.height), amountText, stockpileCountShadowStyle);
+                GUI.Label(countRect, amountText, stockpileCountStyle);
+                drawnResources++;
+            }
+
+            if (drawnResources == 0)
+            {
+                GUI.Label(new Rect(x, y + headingHeight + 4f, width, iconSize),
+                    "Nothing gathered", bodyStyle);
+            }
+
+            return headingHeight + iconSize + 16f;
+        }
+
         private void DrawTooltip(Vector2 mousePosition)
         {
             if (string.IsNullOrEmpty(hoveredTooltip))
@@ -827,11 +979,10 @@ namespace OldenTop
                             continue;
                         }
 
-                        float markerSize = (selected ? SelectedMapWorkerIconSize : MapWorkerIconSize) *
-                                           OccupiedTileIconScale;
+                        float markerSize = MapWorkerIconSize * OccupiedTileIconScale;
                         Rect marker = new Rect(screen.x - markerSize * 0.5f,
                             Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
-                        DrawWorkerIcon(marker, player, false, "placed");
+                        DrawWorkerIcon(marker, player, false, "placed", selected);
 
                         Event current = Event.current;
                         if (!resolutionPhase && player == activePlayer && current.type == EventType.MouseDown &&
@@ -857,6 +1008,7 @@ namespace OldenTop
             float centerIconRadius = GetTileCenterIconSize(tile) * 0.5f;
             float centerToWorker = (HexEdgeNormalProjection * centerToCorner + centerIconRadius) /
                                    (1f + HexEdgeNormalProjection);
+            centerToWorker -= WorkerEdgeInsetPixels;
             return Vector3.Lerp(center, corner, Mathf.Clamp01(centerToWorker / centerToCorner));
         }
 
@@ -897,7 +1049,6 @@ namespace OldenTop
 
                 Rect marker = new Rect(screen.x - markerSize * 0.5f,
                     Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
-                DrawIconOutline(marker);
                 Texture2D hearthIcon = HearthIconCatalog.GetIcon();
                 if (hearthIcon != null)
                 {
@@ -918,7 +1069,7 @@ namespace OldenTop
         private void DrawMapHeader()
         {
             float panelWidth = Screen.width * PanelFraction;
-            const float buttonSize = 38f;
+            const float buttonSize = 54f;
             const float buttonGap = 6f;
             float controlsWidth = buttonSize * 2f + buttonGap;
             float controlsX = Screen.width - controlsWidth - 18f;
@@ -979,9 +1130,8 @@ namespace OldenTop
             DrawWorkerIcon(ghost, activePlayer, false, "dragging");
         }
 
-        private void DrawWorkerIcon(Rect rect, int player, bool dimmed, string state)
+        private void DrawWorkerIcon(Rect rect, int player, bool dimmed, string state, bool selected = false)
         {
-            DrawIconOutline(rect, dimmed);
             Color previousColor = GUI.color;
             if (dimmed)
             {
@@ -1000,10 +1150,37 @@ namespace OldenTop
 
             GUI.color = previousColor;
 
+            if (selected)
+            {
+                DrawSelectedWorkerHighlight(rect, player);
+            }
+
             if (rect.Contains(Event.current.mousePosition))
             {
                 hoveredTooltip = $"Player {player + 1} • Worker • {state}";
             }
+        }
+
+        private void DrawSelectedWorkerHighlight(Rect rect, int player)
+        {
+            if (iconOutlineTexture == null)
+            {
+                return;
+            }
+
+            float pulse = 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * SelectionPulseSpeed);
+            Color highlight = Color.Lerp(PlayerColors[player], Color.white, 0.3f + pulse * 0.45f);
+            highlight.a = 0.58f + pulse * 0.38f;
+
+            Color previousColor = GUI.color;
+            GUI.color = highlight;
+            GUI.DrawTexture(rect, iconOutlineTexture, ScaleMode.ScaleToFit, true);
+
+            Rect innerRing = new Rect(rect.x + rect.width * 0.07f, rect.y + rect.height * 0.07f,
+                rect.width * 0.86f, rect.height * 0.86f);
+            GUI.color = new Color(1f, 1f, 1f, 0.12f + pulse * 0.2f);
+            GUI.DrawTexture(innerRing, iconOutlineTexture, ScaleMode.ScaleToFit, true);
+            GUI.color = previousColor;
         }
 
         private void DrawIconOutline(Rect iconRect, bool dimmed = false)
@@ -1207,6 +1384,9 @@ namespace OldenTop
 
         public void AdvanceSeason()
         {
+            resolvedSeasonName = SeasonNames[seasonIndex];
+            resolvedYear = year;
+            CollectAssignedResources();
             activePlayer = 0;
             resolutionPhase = false;
             seasonIndex++;
@@ -1218,6 +1398,60 @@ namespace OldenTop
 
             PrepareSeasonWorkerMoves();
             BeginActivePlayerAssignments();
+            showSeasonGainsDialog = true;
+        }
+
+        private void CollectAssignedResources()
+        {
+            ClearLatestSeasonGains();
+            if (map == null)
+            {
+                return;
+            }
+
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
+                    int tile = assignments[player, worker];
+                    if (tile < 0 || tile >= map.GeneratedTileCount || !map.HasResource(tile))
+                    {
+                        continue;
+                    }
+
+                    int resourceIndex = (int)map.GetSelectedResource(tile);
+                    if (resourceIndex >= 0 && resourceIndex < ResourceTypeCount)
+                    {
+                        resourceStockpiles[player, resourceIndex]++;
+                        latestSeasonGains[player, resourceIndex]++;
+                    }
+                }
+            }
+        }
+
+        public int GetStockpileAmount(int player, Resource resource)
+        {
+            int resourceIndex = (int)resource;
+            return player >= 0 && player < PlayerCount &&
+                   resourceIndex >= 0 && resourceIndex < ResourceTypeCount
+                ? resourceStockpiles[player, resourceIndex]
+                : 0;
+        }
+
+        public int GetLatestSeasonGain(int player, Resource resource)
+        {
+            int resourceIndex = (int)resource;
+            return player >= 0 && player < PlayerCount &&
+                   resourceIndex >= 0 && resourceIndex < ResourceTypeCount
+                ? latestSeasonGains[player, resourceIndex]
+                : 0;
+        }
+
+        public bool IsSeasonGainsDialogVisible => showSeasonGainsDialog;
+
+        public void DismissSeasonGainsDialog()
+        {
+            showSeasonGainsDialog = false;
         }
 
         private void RecallActivePlayerPieces()
@@ -1485,6 +1719,16 @@ namespace OldenTop
             }
         }
 
+        private void ClearStockpiles()
+        {
+            Array.Clear(resourceStockpiles, 0, resourceStockpiles.Length);
+        }
+
+        private void ClearLatestSeasonGains()
+        {
+            Array.Clear(latestSeasonGains, 0, latestSeasonGains.Length);
+        }
+
         private void EnsureStyles()
         {
             if (iconOutlineTexture == null)
@@ -1503,45 +1747,71 @@ namespace OldenTop
             };
             titleStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 22,
+                fontSize = 44,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleLeft,
                 normal = { textColor = new Color32(238, 231, 210, 255) }
             };
             headingStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 14,
+                fontSize = 28,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleLeft,
                 normal = { textColor = new Color32(224, 219, 203, 255) }
             };
             bodyStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 13,
+                fontSize = 26,
                 wordWrap = true,
                 normal = { textColor = new Color32(210, 207, 196, 255) }
             };
             smallBodyStyle = new GUIStyle(bodyStyle)
             {
-                fontSize = 11
+                fontSize = 22
+            };
+            buttonStyle = new GUIStyle(GUI.skin.button)
+            {
+                fontSize = 28,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter
             };
             zoomButtonStyle = new GUIStyle(GUI.skin.button)
             {
-                fontSize = 22,
+                fontSize = 44,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
                 normal = { textColor = new Color32(238, 231, 210, 255) }
             };
             resourceFallbackStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 16,
+                fontSize = 32,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
                 normal = { textColor = new Color32(248, 245, 226, 255) }
             };
+            stockpileCountStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 22,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.LowerRight,
+                normal = { textColor = Color.white }
+            };
+            stockpileCountShadowStyle = new GUIStyle(stockpileCountStyle)
+            {
+                normal = { textColor = new Color(0f, 0f, 0f, 0.85f) }
+            };
+            dialogTitleStyle = new GUIStyle(titleStyle)
+            {
+                fontSize = 34,
+                alignment = TextAnchor.MiddleCenter
+            };
+            dialogStyle = new GUIStyle(GUI.skin.box)
+            {
+                padding = new RectOffset(20, 20, 20, 20)
+            };
             tooltipStyle = new GUIStyle(GUI.skin.box)
             {
-                fontSize = 12,
+                fontSize = 24,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
                 normal = { textColor = new Color32(238, 231, 210, 255) }
