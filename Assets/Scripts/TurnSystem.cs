@@ -64,6 +64,12 @@ namespace OldenTop
             return resource.ToString();
         }
 
+        public static bool IsFood(Resource resource)
+        {
+            return resource == Resource.Grains || resource == Resource.Aurochs ||
+                   resource == Resource.Mushrooms || resource == Resource.Fish;
+        }
+
         public static string GetIconResourcePath(Resource resource)
         {
             int index = (int)resource;
@@ -123,6 +129,22 @@ namespace OldenTop
     public static class HearthIconCatalog
     {
         private const string IconResourcePath = "ResourceIcons/hearth";
+        private static Texture2D icon;
+
+        public static Texture2D GetIcon()
+        {
+            if (icon == null)
+            {
+                icon = Resources.Load<Texture2D>(IconResourcePath);
+            }
+
+            return icon;
+        }
+    }
+
+    public static class AncestorIconCatalog
+    {
+        private const string IconResourcePath = "AncestorIcons/ancestor-tombstone";
         private static Texture2D icon;
 
         public static Texture2D GetIcon()
@@ -321,9 +343,12 @@ namespace OldenTop
         private readonly int[,] turnStartTiles = new int[PlayerCount, WorkersPerPlayer];
         private readonly int[,] turnStartSlots = new int[PlayerCount, WorkersPerPlayer];
         private readonly bool[,] workerPlacedThisTurn = new bool[PlayerCount, WorkersPerPlayer];
+        private readonly bool[,] workerAlive = new bool[PlayerCount, WorkersPerPlayer];
+        private readonly int[,] assignedFood = new int[PlayerCount, WorkersPerPlayer];
         private readonly bool[] completedFirstTurn = new bool[PlayerCount];
         private readonly int[,] resourceStockpiles = new int[PlayerCount, ResourceTypeCount];
         private readonly int[,] latestSeasonGains = new int[PlayerCount, ResourceTypeCount];
+        private readonly int[] ancestorCounts = new int[PlayerCount];
         private readonly int[] hearthTiles = { -1, -1 };
         private readonly List<int> highlightedTiles = new List<int>(7);
         private readonly List<int>[] occupiedTilesByPlayer =
@@ -338,12 +363,18 @@ namespace OldenTop
         private int seasonIndex;
         private int year = 1;
         private int selectedWorker = -1;
+        private int selectedFoodResource = -1;
         private int pressedWorker = -1;
         private int draggingWorker = -1;
+        private int pressedFoodResource = -1;
+        private int draggingFoodResource = -1;
         private Vector2 workerPressPosition;
+        private Vector2 foodPressPosition;
         private float fittedCameraSize = 1f;
         private bool resolutionPhase;
+        private bool foodAssignmentPhase;
         private bool showSeasonGainsDialog;
+        private bool showFoodShortageDialog;
         private string resolvedSeasonName;
         private int resolvedYear;
         private string statusMessage = "Player 1: place your hearth on any non-water hex.";
@@ -362,12 +393,14 @@ namespace OldenTop
         private GUIStyle dialogStyle;
         private GUIStyle tooltipStyle;
         private Texture2D iconOutlineTexture;
+        private Texture2D ancestorBackdropTexture;
         private string hoveredTooltip;
 
         public int ActivePlayer => activePlayer;
         public int Year => year;
         public string Season => SeasonNames[seasonIndex];
         public bool IsResolutionPhase => resolutionPhase;
+        public bool IsFoodAssignmentPhase => foodAssignmentPhase;
         public bool IsPlacingHearth => !resolutionPhase && hearthTiles[activePlayer] < 0;
         private bool CanRecallActiveHearth => !completedFirstTurn[activePlayer] && hearthTiles[activePlayer] >= 0;
         public int SelectedWorker => selectedWorker;
@@ -417,7 +450,10 @@ namespace OldenTop
             ClearAssignments();
             ClearStockpiles();
             ClearLatestSeasonGains();
+            Array.Clear(ancestorCounts, 0, ancestorCounts.Length);
             showSeasonGainsDialog = false;
+            showFoodShortageDialog = false;
+            foodAssignmentPhase = false;
             ClearWorkerInteraction();
             map?.ClearTileHighlights();
             map?.ClearTileOccupancyOutlines();
@@ -442,7 +478,7 @@ namespace OldenTop
             EnsureStyles();
             hoveredTooltip = null;
             bool previousGuiEnabled = GUI.enabled;
-            GUI.enabled = !showSeasonGainsDialog;
+            GUI.enabled = !showSeasonGainsDialog && !showFoodShortageDialog;
             DrawTileResourceIcons();
             DrawHearthsOnMap();
             DrawPlacementSlotsOnMap();
@@ -456,6 +492,11 @@ namespace OldenTop
                 hoveredTooltip = null;
                 DrawSeasonGainsDialog();
             }
+            else if (showFoodShortageDialog)
+            {
+                hoveredTooltip = null;
+                DrawFoodShortageDialog();
+            }
             else
             {
                 HandleZoomInput(Event.current);
@@ -464,6 +505,10 @@ namespace OldenTop
                 if (draggingWorker >= 0)
                 {
                     DrawDragGhost(Event.current.mousePosition);
+                }
+                else if (draggingFoodResource >= 0)
+                {
+                    DrawFoodDragGhost(Event.current.mousePosition);
                 }
 
                 DrawTooltip(Event.current.mousePosition);
@@ -491,6 +536,8 @@ namespace OldenTop
 
             string phaseText = resolutionPhase
                 ? "COMMITMENTS READY"
+                : foodAssignmentPhase
+                    ? $"PLAYER {activePlayer + 1} FEEDS WORKERS"
                 : IsPlacingHearth
                     ? $"PLAYER {activePlayer + 1} PLACES HEARTH"
                     : $"PLAYER {activePlayer + 1} ASSIGNS";
@@ -511,6 +558,14 @@ namespace OldenTop
             }
 
             y += 14f;
+            GUI.Label(new Rect(x, y, contentWidth, 32f), "ANCESTORS", headingStyle);
+            y += 36f;
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                y += DrawAncestorCounter(x + 8f, y, contentWidth - 8f, player);
+            }
+
+            y += 8f;
             GUI.Label(new Rect(x, y, contentWidth, 42f),
                 IsPlacingHearth ? "STARTING HEARTH" : "WORKERS", headingStyle);
             y += 48f;
@@ -525,6 +580,11 @@ namespace OldenTop
             {
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
+                    if (!workerAlive[activePlayer, worker])
+                    {
+                        continue;
+                    }
+
                     int column = worker % 2;
                     int row = worker / 2;
                     DrawWorkerCard(new Rect(x + column * (InventoryWorkerIconSize + 10f),
@@ -534,18 +594,36 @@ namespace OldenTop
 
                 y += InventoryWorkerIconSize * 2f + 16f;
 
-                string recallLabel = CanRecallActiveHearth
-                    ? "Recall workers and hearth"
-                    : "Reset this player's worker moves";
-                if (GUI.Button(new Rect(x, Screen.height - 128f, contentWidth, 52f), recallLabel, buttonStyle))
+                if (foodAssignmentPhase)
                 {
-                    RecallActivePlayerPieces();
-                }
+                    if (GUI.Button(new Rect(x, Screen.height - 128f, contentWidth, 52f),
+                            "Clear food assignments", buttonStyle))
+                    {
+                        ClearActivePlayerFoodAssignments();
+                    }
 
-                GUI.backgroundColor = PlayerColors[activePlayer];
-                if (GUI.Button(new Rect(x, Screen.height - 68f, contentWidth, 52f), "End assignments", buttonStyle))
+                    GUI.backgroundColor = PlayerColors[activePlayer];
+                    if (GUI.Button(new Rect(x, Screen.height - 68f, contentWidth, 52f),
+                            "End food assignment", buttonStyle))
+                    {
+                        TryEndFoodAssignments();
+                    }
+                }
+                else
                 {
-                    EndAssignments();
+                    string recallLabel = CanRecallActiveHearth
+                        ? "Recall workers and hearth"
+                        : "Reset this player's worker moves";
+                    if (GUI.Button(new Rect(x, Screen.height - 128f, contentWidth, 52f), recallLabel, buttonStyle))
+                    {
+                        RecallActivePlayerPieces();
+                    }
+
+                    GUI.backgroundColor = PlayerColors[activePlayer];
+                    if (GUI.Button(new Rect(x, Screen.height - 68f, contentWidth, 52f), "End assignments", buttonStyle))
+                    {
+                        EndAssignments();
+                    }
                 }
 
                 GUI.backgroundColor = Color.white;
@@ -572,11 +650,19 @@ namespace OldenTop
 
             DrawWorkerIcon(rect, activePlayer, placedThisTurn,
                 placedThisTurn ? "placed this turn" : "ready to move", selected);
+            DrawAssignedFoodOverlay(rect, activePlayer, worker);
 
             Event current = Event.current;
             if (current.type == EventType.MouseDown && current.button == 0 && rect.Contains(current.mousePosition))
             {
-                BeginWorkerPress(worker, current);
+                if (foodAssignmentPhase)
+                {
+                    TryAssignSelectedFoodToActiveWorker(worker, current);
+                }
+                else
+                {
+                    BeginWorkerPress(worker, current);
+                }
             }
         }
 
@@ -594,6 +680,12 @@ namespace OldenTop
 
         private void HandlePointerInteraction(Event current)
         {
+            if (foodAssignmentPhase)
+            {
+                HandleFoodPointerInteraction(current);
+                return;
+            }
+
             if (IsPlacingHearth)
             {
                 if (current.type == EventType.MouseDown && current.button == 0 &&
@@ -652,6 +744,50 @@ namespace OldenTop
                 TryGetPlacementSlotAtGuiPosition(current.mousePosition, out int clickedTile, out int clickedSlot))
             {
                 TryAssignActiveWorker(selectedWorker, clickedTile, clickedSlot);
+                current.Use();
+            }
+        }
+
+        private void HandleFoodPointerInteraction(Event current)
+        {
+            if (current.type == EventType.KeyDown && current.keyCode == KeyCode.Escape &&
+                (pressedFoodResource >= 0 || draggingFoodResource >= 0))
+            {
+                ClearFoodPointerState();
+                statusMessage = "Food assignment cancelled.";
+                current.Use();
+                return;
+            }
+
+            if (current.type == EventType.MouseDrag && pressedFoodResource >= 0 &&
+                Vector2.Distance(foodPressPosition, current.mousePosition) >= DragThreshold)
+            {
+                draggingFoodResource = pressedFoodResource;
+                statusMessage = "Drop the food onto one of your workers.";
+                current.Use();
+                return;
+            }
+
+            if (current.type == EventType.MouseUp && current.button == 0 && draggingFoodResource >= 0)
+            {
+                int resource = draggingFoodResource;
+                if (TryGetActiveWorkerAtGuiPosition(current.mousePosition, out int worker))
+                {
+                    TryAssignFoodToActiveWorker(worker, (Resource)resource);
+                }
+                else
+                {
+                    statusMessage = "Food assignment cancelled. Drop food onto one of your workers.";
+                }
+
+                ClearFoodPointerState();
+                current.Use();
+                return;
+            }
+
+            if (current.type == EventType.MouseUp && current.button == 0 && pressedFoodResource >= 0)
+            {
+                pressedFoodResource = -1;
                 current.Use();
             }
         }
@@ -744,14 +880,14 @@ namespace OldenTop
                     StockpileResourceIconSize,
                     StockpileResourceIconSize);
                 DrawStockpileResourceIcon(iconRect, (Resource)resourceIndex,
-                    resourceStockpiles[player, resourceIndex]);
+                    resourceStockpiles[player, resourceIndex], player);
             }
 
             return headingHeight + StockpilePlayerLabelGap +
                    (StockpileResourceIconSize + verticalGap) * 2f + 8f;
         }
 
-        private void DrawStockpileResourceIcon(Rect rect, Resource resource, int amount)
+        private void DrawStockpileResourceIcon(Rect rect, Resource resource, int amount, int player)
         {
             Color previousColor = GUI.color;
             if (amount == 0)
@@ -768,7 +904,34 @@ namespace OldenTop
             GUI.Label(new Rect(countRect.x + 1.5f, countRect.y + 1.5f,
                 countRect.width, countRect.height), amount.ToString(), stockpileCountShadowStyle);
             GUI.Label(countRect, amount.ToString(), stockpileCountStyle);
+
+            bool foodSelection = foodAssignmentPhase && player == activePlayer && ResourceCatalog.IsFood(resource);
+            if (foodSelection && selectedFoodResource == (int)resource)
+            {
+                DrawSelectedWorkerHighlight(rect, activePlayer);
+            }
+
+            Event current = Event.current;
+            if (foodSelection && current.type == EventType.MouseDown && current.button == 0 &&
+                rect.Contains(current.mousePosition))
+            {
+                BeginFoodPress(resource, current);
+            }
+
             GUI.color = previousColor;
+        }
+
+        private float DrawAncestorCounter(float x, float y, float width, int player)
+        {
+            const float iconSize = 46f;
+            Rect iconRect = new Rect(x, y, iconSize, iconSize);
+            DrawAncestorIcon(iconRect);
+            Color previousColor = GUI.color;
+            GUI.color = PlayerColors[player];
+            GUI.Label(new Rect(x + iconSize + 8f, y, width - iconSize - 8f, iconSize),
+                $"Player {player + 1}: {ancestorCounts[player]}", smallBodyStyle);
+            GUI.color = previousColor;
+            return iconSize + 4f;
         }
 
         private void DrawSeasonGainsDialog()
@@ -875,7 +1038,7 @@ namespace OldenTop
 
         private void DrawPlacementSlotsOnMap()
         {
-            if (mapCamera == null || selectedWorker < 0 || resolutionPhase || IsPlacingHearth)
+            if (mapCamera == null || selectedWorker < 0 || resolutionPhase || foodAssignmentPhase || IsPlacingHearth)
             {
                 return;
             }
@@ -908,7 +1071,7 @@ namespace OldenTop
         {
             tile = -1;
             slot = -1;
-            if (selectedWorker < 0 || resolutionPhase || IsPlacingHearth)
+            if (selectedWorker < 0 || resolutionPhase || foodAssignmentPhase || IsPlacingHearth)
             {
                 return false;
             }
@@ -955,6 +1118,11 @@ namespace OldenTop
                 {
                     for (int worker = 0; worker < WorkersPerPlayer; worker++)
                     {
+                        if (!workerAlive[player, worker])
+                        {
+                            continue;
+                        }
+
                         bool selected = player == activePlayer && worker == selectedWorker;
                         if (selected != drawSelectedWorker)
                         {
@@ -983,16 +1151,59 @@ namespace OldenTop
                         Rect marker = new Rect(screen.x - markerSize * 0.5f,
                             Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
                         DrawWorkerIcon(marker, player, false, "placed", selected);
+                        DrawAssignedFoodOverlay(marker, player, worker);
 
                         Event current = Event.current;
                         if (!resolutionPhase && player == activePlayer && current.type == EventType.MouseDown &&
                             current.button == 0 && marker.Contains(current.mousePosition))
                         {
-                            BeginWorkerPress(worker, current);
+                            if (foodAssignmentPhase)
+                            {
+                                TryAssignSelectedFoodToActiveWorker(worker, current);
+                            }
+                            else
+                            {
+                                BeginWorkerPress(worker, current);
+                            }
                         }
                     }
                 }
             }
+        }
+
+        private bool TryGetActiveWorkerAtGuiPosition(Vector2 guiPoint, out int worker)
+        {
+            worker = -1;
+            if (mapCamera == null)
+            {
+                return false;
+            }
+
+            for (int candidate = 0; candidate < WorkersPerPlayer; candidate++)
+            {
+                if (!workerAlive[activePlayer, candidate])
+                {
+                    continue;
+                }
+
+                int tile = assignments[activePlayer, candidate];
+                int slot = assignmentSlots[activePlayer, candidate];
+                if (tile < 0 || slot < 0 || slot >= TileContentSlotCount)
+                {
+                    continue;
+                }
+
+                Vector3 screen = GetWorkerSlotScreenPosition(tile, slot);
+                float size = MapWorkerIconSize * OccupiedTileIconScale;
+                Rect marker = new Rect(screen.x - size * 0.5f, Screen.height - screen.y - size * 0.5f, size, size);
+                if (marker.Contains(guiPoint))
+                {
+                    worker = candidate;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private Vector3 GetWorkerSlotScreenPosition(int tile, int slot)
@@ -1077,6 +1288,8 @@ namespace OldenTop
                 controlsX - panelWidth - 26f, buttonSize);
             GUI.Box(header, resolutionPhase
                 ? "All commitments are visible — advance when ready"
+                : foodAssignmentPhase
+                    ? $"Player {activePlayer + 1}: choose food, then assign it to every worker"
                 : IsPlacingHearth
                     ? $"Player {activePlayer + 1}: place your hearth on a non-water hex"
                     : $"Player {activePlayer + 1}: each worker may stay or move one tile",
@@ -1130,6 +1343,13 @@ namespace OldenTop
             DrawWorkerIcon(ghost, activePlayer, false, "dragging");
         }
 
+        private void DrawFoodDragGhost(Vector2 mousePosition)
+        {
+            const float size = 52f;
+            Rect ghost = new Rect(mousePosition.x - size * 0.5f, mousePosition.y - size * 0.5f, size, size);
+            DrawResourceIcon(ghost, (Resource)draggingFoodResource);
+        }
+
         private void DrawWorkerIcon(Rect rect, int player, bool dimmed, string state, bool selected = false)
         {
             Color previousColor = GUI.color;
@@ -1159,6 +1379,44 @@ namespace OldenTop
             {
                 hoveredTooltip = $"Player {player + 1} • Worker • {state}";
             }
+        }
+
+        private void DrawAssignedFoodOverlay(Rect workerRect, int player, int worker)
+        {
+            if (!foodAssignmentPhase || player < 0 || player >= PlayerCount ||
+                worker < 0 || worker >= WorkersPerPlayer)
+            {
+                return;
+            }
+
+            int food = assignedFood[player, worker];
+            if (food < 0 || food >= ResourceTypeCount)
+            {
+                return;
+            }
+
+            float size = workerRect.width * 0.48f;
+            Rect foodRect = new Rect(workerRect.xMax - size, workerRect.yMax - size, size, size);
+            Color previousColor = GUI.color;
+            GUI.color = new Color(1f, 1f, 1f, 0.96f);
+            DrawResourceIcon(foodRect, (Resource)food);
+            GUI.color = previousColor;
+        }
+
+        private void DrawAncestorIcon(Rect rect)
+        {
+            Color previousColor = GUI.color;
+            GUI.color = Color.white;
+            GUI.DrawTexture(rect, ancestorBackdropTexture, ScaleMode.ScaleToFit, true);
+            Texture2D icon = AncestorIconCatalog.GetIcon();
+            if (icon != null)
+            {
+                float inset = rect.width * 0.14f;
+                Rect glyphRect = new Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2f, rect.height - inset * 2f);
+                GUI.color = new Color32(190, 190, 183, 255);
+                GUI.DrawTexture(glyphRect, icon, ScaleMode.ScaleToFit, true);
+            }
+            GUI.color = previousColor;
         }
 
         private void DrawSelectedWorkerHighlight(Rect rect, int player)
@@ -1211,7 +1469,8 @@ namespace OldenTop
         {
             if (resolutionPhase || map == null || worker < 0 || worker >= WorkersPerPlayer ||
                 tile < 0 || tile >= map.GeneratedTileCount ||
-                slot < 0 || slot >= TileContentSlotCount || IsPlacingHearth)
+                slot < 0 || slot >= TileContentSlotCount || IsPlacingHearth || foodAssignmentPhase ||
+                !workerAlive[activePlayer, worker])
             {
                 return false;
             }
@@ -1272,7 +1531,7 @@ namespace OldenTop
             for (int offset = 1; offset <= WorkersPerPlayer; offset++)
             {
                 int candidate = (currentWorker + offset) % WorkersPerPlayer;
-                if (!workerPlacedThisTurn[activePlayer, candidate])
+                if (workerAlive[activePlayer, candidate] && !workerPlacedThisTurn[activePlayer, candidate])
                 {
                     return candidate;
                 }
@@ -1283,7 +1542,8 @@ namespace OldenTop
 
         public bool SelectActiveWorker(int worker)
         {
-            if (resolutionPhase || IsPlacingHearth || worker < 0 || worker >= WorkersPerPlayer)
+            if (resolutionPhase || foodAssignmentPhase || IsPlacingHearth || worker < 0 || worker >= WorkersPerPlayer ||
+                !workerAlive[activePlayer, worker])
             {
                 return false;
             }
@@ -1296,7 +1556,8 @@ namespace OldenTop
 
         private bool ResetActiveWorkerMove(int worker)
         {
-            if (resolutionPhase || worker < 0 || worker >= WorkersPerPlayer)
+            if (resolutionPhase || foodAssignmentPhase || worker < 0 || worker >= WorkersPerPlayer ||
+                !workerAlive[activePlayer, worker])
             {
                 return false;
             }
@@ -1345,6 +1606,7 @@ namespace OldenTop
             map.RemoveResource(tile);
             for (int worker = 0; worker < WorkersPerPlayer; worker++)
             {
+                workerAlive[activePlayer, worker] = true;
                 assignments[activePlayer, worker] = tile;
                 assignmentSlots[activePlayer, worker] = worker;
                 turnStartTiles[activePlayer, worker] = tile;
@@ -1361,6 +1623,12 @@ namespace OldenTop
 
         public void EndAssignments()
         {
+            if (foodAssignmentPhase)
+            {
+                TryEndFoodAssignments();
+                return;
+            }
+
             if (IsPlacingHearth)
             {
                 statusMessage = "Place your hearth before beginning your first assignments.";
@@ -1377,27 +1645,27 @@ namespace OldenTop
                 return;
             }
 
-            resolutionPhase = true;
-            statusMessage = $"{SeasonNames[seasonIndex]} commitments are locked.";
-            Debug.Log($"Year {year} {SeasonNames[seasonIndex]}: both players committed their workers.", this);
+            ResolveSeasonAndBeginFoodAssignments();
         }
 
         public void AdvanceSeason()
+        {
+            if (!resolutionPhase)
+            {
+                return;
+            }
+
+            BeginFoodAssignments();
+        }
+
+        private void ResolveSeasonAndBeginFoodAssignments()
         {
             resolvedSeasonName = SeasonNames[seasonIndex];
             resolvedYear = year;
             CollectAssignedResources();
             activePlayer = 0;
             resolutionPhase = false;
-            seasonIndex++;
-            if (seasonIndex >= SeasonNames.Length)
-            {
-                seasonIndex = 0;
-                year++;
-            }
-
-            PrepareSeasonWorkerMoves();
-            BeginActivePlayerAssignments();
+            BeginFoodAssignments();
             showSeasonGainsDialog = true;
         }
 
@@ -1413,6 +1681,11 @@ namespace OldenTop
             {
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
+                    if (!workerAlive[player, worker])
+                    {
+                        continue;
+                    }
+
                     int tile = assignments[player, worker];
                     if (tile < 0 || tile >= map.GeneratedTileCount || !map.HasResource(tile))
                     {
@@ -1452,6 +1725,246 @@ namespace OldenTop
         public void DismissSeasonGainsDialog()
         {
             showSeasonGainsDialog = false;
+        }
+
+        public int GetAssignedFood(int player, int worker)
+        {
+            return player >= 0 && player < PlayerCount && worker >= 0 && worker < WorkersPerPlayer
+                ? assignedFood[player, worker]
+                : -1;
+        }
+
+        public bool IsWorkerAlive(int player, int worker)
+        {
+            return player >= 0 && player < PlayerCount && worker >= 0 && worker < WorkersPerPlayer &&
+                   workerAlive[player, worker];
+        }
+
+        public int GetAncestorCount(int player)
+        {
+            return player >= 0 && player < PlayerCount ? ancestorCounts[player] : 0;
+        }
+
+        public bool IsFoodShortageDialogVisible => showFoodShortageDialog;
+
+        public bool TryAssignFoodToActiveWorker(int worker, Resource food)
+        {
+            int foodIndex = (int)food;
+            if (!foodAssignmentPhase || worker < 0 || worker >= WorkersPerPlayer ||
+                !workerAlive[activePlayer, worker] || !ResourceCatalog.IsFood(food) ||
+                foodIndex < 0 || foodIndex >= ResourceTypeCount)
+            {
+                return false;
+            }
+
+            int previouslyAssigned = assignedFood[activePlayer, worker];
+            if (previouslyAssigned == foodIndex)
+            {
+                statusMessage = "That worker already has this food assigned.";
+                return false;
+            }
+
+            if (resourceStockpiles[activePlayer, foodIndex] <= 0)
+            {
+                statusMessage = $"No {ResourceCatalog.GetLabel(food)} remains in this stockpile.";
+                return false;
+            }
+
+            if (previouslyAssigned >= 0)
+            {
+                resourceStockpiles[activePlayer, previouslyAssigned]++;
+            }
+
+            resourceStockpiles[activePlayer, foodIndex]--;
+            assignedFood[activePlayer, worker] = foodIndex;
+            selectedFoodResource = foodIndex;
+            statusMessage = $"Assigned {ResourceCatalog.GetLabel(food)} to a worker.";
+            return true;
+        }
+
+        private void TryAssignSelectedFoodToActiveWorker(int worker, Event current)
+        {
+            if (selectedFoodResource < 0)
+            {
+                statusMessage = "Select a food stockpile first.";
+            }
+            else
+            {
+                TryAssignFoodToActiveWorker(worker, (Resource)selectedFoodResource);
+            }
+
+            current.Use();
+        }
+
+        private void BeginFoodPress(Resource food, Event current)
+        {
+            int foodIndex = (int)food;
+            if (resourceStockpiles[activePlayer, foodIndex] <= 0)
+            {
+                statusMessage = $"No {ResourceCatalog.GetLabel(food)} remains in this stockpile.";
+                current.Use();
+                return;
+            }
+
+            selectedFoodResource = foodIndex;
+            pressedFoodResource = foodIndex;
+            foodPressPosition = current.mousePosition;
+            statusMessage = $"{ResourceCatalog.GetLabel(food)} selected. Click or drag it onto a worker.";
+            current.Use();
+        }
+
+        public void TryEndFoodAssignments()
+        {
+            if (!foodAssignmentPhase)
+            {
+                return;
+            }
+
+            if (CountUnfedWorkers(activePlayer) > 0)
+            {
+                showFoodShortageDialog = true;
+                return;
+            }
+
+            CompleteActivePlayerFoodAssignments();
+        }
+
+        public void ConfirmFoodShortage()
+        {
+            if (!showFoodShortageDialog || !foodAssignmentPhase)
+            {
+                return;
+            }
+
+            showFoodShortageDialog = false;
+            CompleteActivePlayerFoodAssignments();
+        }
+
+        private int CountUnfedWorkers(int player)
+        {
+            int count = 0;
+            for (int worker = 0; worker < WorkersPerPlayer; worker++)
+            {
+                if (workerAlive[player, worker] && assignedFood[player, worker] < 0)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private void CompleteActivePlayerFoodAssignments()
+        {
+            int deaths = 0;
+            for (int worker = 0; worker < WorkersPerPlayer; worker++)
+            {
+                if (!workerAlive[activePlayer, worker])
+                {
+                    continue;
+                }
+
+                if (assignedFood[activePlayer, worker] < 0)
+                {
+                    workerAlive[activePlayer, worker] = false;
+                    assignments[activePlayer, worker] = -1;
+                    assignmentSlots[activePlayer, worker] = -1;
+                    deaths++;
+                }
+
+                assignedFood[activePlayer, worker] = -1;
+            }
+
+            ancestorCounts[activePlayer] += deaths;
+            ClearFoodInteraction();
+            UpdateOccupiedTileOutlines();
+
+            if (activePlayer < PlayerCount - 1)
+            {
+                activePlayer++;
+                statusMessage = $"Player {activePlayer + 1}: assign one food to every worker.";
+                return;
+            }
+
+            foodAssignmentPhase = false;
+            seasonIndex++;
+            if (seasonIndex >= SeasonNames.Length)
+            {
+                seasonIndex = 0;
+                year++;
+            }
+
+            PrepareSeasonWorkerMoves();
+            BeginActivePlayerAssignments();
+        }
+
+        private void ClearActivePlayerFoodAssignments()
+        {
+            if (!foodAssignmentPhase)
+            {
+                return;
+            }
+
+            for (int worker = 0; worker < WorkersPerPlayer; worker++)
+            {
+                int food = assignedFood[activePlayer, worker];
+                if (food >= 0)
+                {
+                    resourceStockpiles[activePlayer, food]++;
+                    assignedFood[activePlayer, worker] = -1;
+                }
+            }
+
+            selectedFoodResource = -1;
+            statusMessage = "Food assignments cleared. Choose a stockpile to assign food again.";
+        }
+
+        private void BeginFoodAssignments()
+        {
+            foodAssignmentPhase = true;
+            activePlayer = 0;
+            ClearFoodInteraction();
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
+                    assignedFood[player, worker] = -1;
+                }
+            }
+
+            statusMessage = "Player 1: assign one food item to every worker.";
+        }
+
+        private void DrawFoodShortageDialog()
+        {
+            Color previousColor = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.6f);
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = previousColor;
+
+            float width = Mathf.Min(620f, Screen.width - 40f);
+            float height = Mathf.Min(330f, Screen.height - 40f);
+            Rect dialog = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
+            GUI.color = new Color32(35, 22, 20, 248);
+            GUI.DrawTexture(dialog, Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = previousColor;
+            GUI.Box(dialog, GUIContent.none, dialogStyle);
+
+            int unfed = CountUnfedWorkers(activePlayer);
+            float x = dialog.x + 28f;
+            float contentWidth = dialog.width - 56f;
+            GUI.Label(new Rect(x, dialog.y + 20f, contentWidth, 44f), "WORKERS WILL STARVE", dialogTitleStyle);
+            GUI.Label(new Rect(x, dialog.y + 78f, contentWidth, 94f),
+                $"{unfed} worker{(unfed == 1 ? string.Empty : "s")} has no food assigned and will die, joining your ancestors.", bodyStyle);
+            if (GUI.Button(new Rect(x, dialog.yMax - 72f, contentWidth * 0.48f, 48f), "Assign food", buttonStyle))
+            {
+                showFoodShortageDialog = false;
+            }
+            if (GUI.Button(new Rect(dialog.xMax - 28f - contentWidth * 0.48f, dialog.yMax - 72f,
+                    contentWidth * 0.48f, 48f), "Let them starve", buttonStyle))
+            {
+                ConfirmFoodShortage();
+            }
         }
 
         private void RecallActivePlayerPieces()
@@ -1523,21 +2036,53 @@ namespace OldenTop
         private void BeginActivePlayerAssignments()
         {
             ClearWorkerInteraction();
+            foodAssignmentPhase = false;
             if (hearthTiles[activePlayer] < 0)
             {
                 statusMessage = $"Player {activePlayer + 1}: place your hearth on any non-water hex.";
                 return;
             }
 
-            selectedWorker = 0;
+            selectedWorker = FindFirstAliveWorker(activePlayer);
+            if (selectedWorker < 0)
+            {
+                statusMessage = $"Player {activePlayer + 1} has no living workers. End assignments to continue.";
+                return;
+            }
+
             statusMessage = $"Player {activePlayer + 1}: a worker is selected. Choose an available slot.";
             UpdateWorkerPlacementHighlights();
+        }
+
+        private int FindFirstAliveWorker(int player)
+        {
+            for (int worker = 0; worker < WorkersPerPlayer; worker++)
+            {
+                if (workerAlive[player, worker])
+                {
+                    return worker;
+                }
+            }
+
+            return -1;
         }
 
         private void ClearPointerState()
         {
             pressedWorker = -1;
             draggingWorker = -1;
+        }
+
+        private void ClearFoodPointerState()
+        {
+            pressedFoodResource = -1;
+            draggingFoodResource = -1;
+        }
+
+        private void ClearFoodInteraction()
+        {
+            selectedFoodResource = -1;
+            ClearFoodPointerState();
         }
 
         private void ClearWorkerInteraction()
@@ -1550,7 +2095,7 @@ namespace OldenTop
         private void UpdateWorkerPlacementHighlights()
         {
             highlightedTiles.Clear();
-            if (map == null || resolutionPhase || IsPlacingHearth ||
+            if (map == null || resolutionPhase || foodAssignmentPhase || IsPlacingHearth ||
                 selectedWorker < 0 || selectedWorker >= WorkersPerPlayer)
             {
                 map?.ClearTileHighlights();
@@ -1587,7 +2132,7 @@ namespace OldenTop
 
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
-                    if (assignments[player, worker] == tile)
+                    if (workerAlive[player, worker] && assignments[player, worker] == tile)
                     {
                         return true;
                     }
@@ -1634,7 +2179,7 @@ namespace OldenTop
             {
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
-                    if (assignments[player, worker] == tile && assignmentSlots[player, worker] == slot)
+                    if (workerAlive[player, worker] && assignments[player, worker] == tile && assignmentSlots[player, worker] == slot)
                     {
                         return true;
                     }
@@ -1651,7 +2196,7 @@ namespace OldenTop
             {
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
-                    if (assignments[player, worker] == tile)
+                    if (workerAlive[player, worker] && assignments[player, worker] == tile)
                     {
                         count++;
                     }
@@ -1676,7 +2221,10 @@ namespace OldenTop
                 AddOccupiedTile(occupiedTiles, hearthTiles[player]);
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
-                    AddOccupiedTile(occupiedTiles, assignments[player, worker]);
+                    if (workerAlive[player, worker])
+                    {
+                        AddOccupiedTile(occupiedTiles, assignments[player, worker]);
+                    }
                 }
 
                 for (int index = 0; index < occupiedTiles.Count; index++)
@@ -1705,6 +2253,8 @@ namespace OldenTop
                     turnStartTiles[player, worker] = -1;
                     turnStartSlots[player, worker] = -1;
                     workerPlacedThisTurn[player, worker] = false;
+                    workerAlive[player, worker] = true;
+                    assignedFood[player, worker] = -1;
                 }
 
                 completedFirstTurn[player] = false;
@@ -1734,6 +2284,11 @@ namespace OldenTop
             if (iconOutlineTexture == null)
             {
                 iconOutlineTexture = CreateIconOutlineTexture();
+            }
+
+            if (ancestorBackdropTexture == null)
+            {
+                ancestorBackdropTexture = CreateAncestorBackdropTexture();
             }
 
             if (panelStyle != null)
@@ -1838,6 +2393,35 @@ namespace OldenTop
                     pixels[y * size + x] = inRing
                         ? new Color32(255, 255, 255, 255)
                         : new Color32(0, 0, 0, 0);
+                }
+            }
+
+            texture.SetPixels32(pixels);
+            texture.Apply(false, true);
+            return texture;
+        }
+
+        private static Texture2D CreateAncestorBackdropTexture()
+        {
+            const int size = 64;
+            Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            {
+                name = "Ancestor Icon Backdrop",
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            Color32[] pixels = new Color32[size * size];
+            Vector2 center = new Vector2(size * 0.5f, size * 0.5f);
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float distance = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), center);
+                    pixels[y * size + x] = distance <= size * 0.45f
+                        ? new Color32(25, 28, 25, 255)
+                        : distance <= size * 0.49f
+                            ? new Color32(239, 226, 193, 255)
+                            : new Color32(0, 0, 0, 0);
                 }
             }
 

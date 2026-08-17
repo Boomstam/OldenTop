@@ -31,6 +31,7 @@ Candidate icons added for upcoming systems:
 - Tent shelter: `camping-tent.svg` → `tent-shelter.svg` (Delapouite)
 - Wooden shelter: `wood-cabin.svg` → `wooden-shelter.svg` (Delapouite)
 - Fishing nets: `fishing-net.svg` → `fishing-nets.svg` (Lorc)
+- Ancestors: `tombstone.svg` → `ancestor-tombstone.svg` (Lorc)
 
 The Unity-ready PNGs in `Assets/Resources/ResourceIcons/` retain the original glyphs.
 They are adapted with a uniform inset, a dark circular field, a warm outline, and a

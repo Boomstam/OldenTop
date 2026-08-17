@@ -116,6 +116,60 @@ namespace OldenTop.Tests
         }
 
         [Test]
+        public void FoodAssignment_ConsumesFoodAndKeepsFedWorkersAlive()
+        {
+            Assert.That(turnSystem.TryPlaceActiveHearth(0), Is.True);
+            Resource food = map.GetSelectedResource(1);
+            Assert.That(ResourceCatalog.IsFood(food), Is.True,
+                "The adjacent prototype resource must be edible for this feeding-flow test.");
+            for (int worker = 0; worker < 4; worker++)
+            {
+                Assert.That(turnSystem.TryAssignActiveWorker(worker, 1), Is.True);
+            }
+            turnSystem.EndAssignments();
+
+            Assert.That(turnSystem.TryPlaceActiveHearth(21), Is.True);
+            turnSystem.EndAssignments();
+
+            Assert.That(turnSystem.IsFoodAssignmentPhase, Is.True);
+            Assert.That(turnSystem.GetStockpileAmount(0, food), Is.EqualTo(4));
+            for (int worker = 0; worker < 4; worker++)
+            {
+                Assert.That(turnSystem.TryAssignFoodToActiveWorker(worker, food), Is.True);
+            }
+            Assert.That(turnSystem.GetStockpileAmount(0, food), Is.Zero);
+
+            turnSystem.TryEndFoodAssignments();
+
+            Assert.That(turnSystem.ActivePlayer, Is.EqualTo(1));
+            Assert.That(turnSystem.GetAncestorCount(0), Is.Zero);
+            for (int worker = 0; worker < 4; worker++)
+            {
+                Assert.That(turnSystem.IsWorkerAlive(0, worker), Is.True);
+            }
+        }
+
+        [Test]
+        public void FoodAssignment_WarnsThenRemovesUnfedWorkersAsAncestors()
+        {
+            Assert.That(turnSystem.TryPlaceActiveHearth(0), Is.True);
+            turnSystem.EndAssignments();
+            Assert.That(turnSystem.TryPlaceActiveHearth(21), Is.True);
+            turnSystem.EndAssignments();
+
+            turnSystem.TryEndFoodAssignments();
+
+            Assert.That(turnSystem.IsFoodShortageDialogVisible, Is.True);
+            turnSystem.ConfirmFoodShortage();
+
+            Assert.That(turnSystem.GetAncestorCount(0), Is.EqualTo(4));
+            for (int worker = 0; worker < 4; worker++)
+            {
+                Assert.That(turnSystem.IsWorkerAlive(0, worker), Is.False);
+            }
+        }
+
+        [Test]
         public void WorkerIconCatalog_AllPlayerIconsCanBeLoaded()
         {
             for (int player = 0; player < 2; player++)
@@ -123,6 +177,13 @@ namespace OldenTop.Tests
                 Assert.That(WorkerIconCatalog.GetIcon(player), Is.Not.Null,
                     $"Missing icon at Resources/{WorkerIconCatalog.GetIconResourcePath(player)}");
             }
+        }
+
+        [Test]
+        public void AncestorIconCatalog_CanLoadTombstoneIcon()
+        {
+            Assert.That(AncestorIconCatalog.GetIcon(), Is.Not.Null,
+                "Missing ancestor icon at Resources/AncestorIcons/ancestor-tombstone");
         }
 
         [Test]
