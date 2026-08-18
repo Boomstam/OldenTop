@@ -71,22 +71,20 @@ Initial terrain types:
   - mushrooms;
   - possible hidden features such as ancient trees and migration routes.
 - **Plains**
-  - grains;
-  - aurochs;
+  - every plains/grassland hex has either aurochs or edible roots;
   - space for building;
   - convertible into farmland or pasture;
   - grazing and migratory opportunities.
 - **Mountain**
-  - flintstone;
-  - firestone;
+  - stone on half of mountain hexes; the other half have no resource site;
   - caves as natural shelter;
   - wolves and bears;
   - comparatively rarer than woodland or plains;
   - possible features such as springs, sheltered valleys, seams, outcrops, and cave systems.
 - **Water**
   - lakes occupy hexes;
-  - fish;
-  - reeds useful for rope;
+  - only shore hexes have resource sites, yielding either fish or shells;
+  - shells are stored in the stockpile but currently have no use;
   - fast movement once boats are available.
 
 ### 2.3 Rivers
@@ -108,7 +106,7 @@ Rivers may:
 The map should separate several layers:
 
 1. **Terrain:** woodland, plains, mountain, lake; highly persistent.
-2. **Site/resource:** wood, mushrooms, grains, aurochs, flintstone, firestone, fish, and reeds; usually persistent but destroyable or replaceable.
+2. **Site/resource:** wood, mushrooms, aurochs, roots, stone, fish, and shells; usually persistent but destroyable or replaceable.
 3. **Current abundance:** high, normal, poor, or exhausted; fluctuates with years, seasons, exploitation, and events.
 4. **Landscape transformation:** rarer changes such as woodland becoming clearing, plains becoming farmland, flood creating marsh, fire opening forest, mine collapse, or river-course change.
 
@@ -328,16 +326,13 @@ The initial skill/knowledge space includes:
   - ropes;
   - other stone, bone, antler, shell, hide, and wood tools.
 - **Mining and stonework**
-  - firestone;
-  - flint;
-  - building stone;
-  - decorative stone;
+  - the current prototype abstracts firestone, flint, building stone, and decorative stone into one Stone resource;
   - preparing and working stone;
   - mining salt.
-- **Fishing, sailing, and reeds**
+- **Fishing, sailing, and shoreline gathering**
   - fishing;
   - boat use and water travel;
-  - gathering reeds for rope and construction.
+  - gathering shells, which are stockpiled but do not yet have a use.
 - **Building and infrastructure**
   - hide/wood houses and tents;
   - shelter;
@@ -451,7 +446,7 @@ Players should choose between sustainable and aggressive extraction. Examples:
 - timber: gather dead/fallen wood or cut aggressively for much more timber;
 - fishing: ordinary catch or intensive fishing that reduces future stock;
 - animal population: hunt selectively or push the herd toward collapse;
-- reeds: cut carefully or strip the bank.
+- shoreline fish or shell beds: gather carefully or exploit them intensively.
 
 Human choices and the Gods/world system jointly shape ecology. A poor berry year may be the delayed result of player overuse rather than divine punishment.
 
@@ -579,13 +574,13 @@ Proposed examples:
 - **Wet Year**
   - mushrooms replenish strongly;
   - berries are good;
-  - reeds are abundant;
+  - shore fishing improves and more shells wash ashore;
   - rivers are high;
   - floods become more likely/stronger;
   - wood is harder to dry.
 - **Dry Year**
   - berries and mushrooms are poor;
-  - reeds are reduced;
+  - shore fish are reduced;
   - firewood dries well;
   - pasture deteriorates;
   - wildfire becomes more dangerous.

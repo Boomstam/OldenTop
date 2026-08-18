@@ -7,24 +7,21 @@ and the [game-icons/icons](https://github.com/game-icons/icons) repository.
 - License: Creative Commons Attribution 3.0 (CC BY 3.0)
 - License text: https://creativecommons.org/licenses/by/3.0/
 
-Resource mapping:
+Current resource mapping:
 
-- Grains: `grain-bundle.svg`
 - Aurochs: `charging-bull.svg`
+- Roots: `tree-roots.svg` → `roots.svg` (Delapouite)
 - Wood: `wood-pile.svg`
 - Mushrooms: `mushrooms-cluster.svg`
-- Flintstone: `stone-pile.svg`
-- Firestone: `fire-gem.svg`
+- Stone: `stone-pile.svg`
 - Fish: `school-of-fish.svg`
-- Reeds: `reed.svg`
+- Shells: `triple-shells.svg` → `shells.svg` (Lorc)
 
 Candidate icons added for upcoming systems:
 
-- Roots: `tree-roots.svg` → `roots.svg` (Delapouite)
 - Spear: `stone-spear.svg` → `spear.svg` (Lorc)
 - Basket: `basket.svg` → `basket.svg` (Delapouite)
 - Bow: `bow-arrow.svg` → `bow.svg` (Delapouite)
-- Shells: `triple-shells.svg` → `shells.svg` (Lorc)
 - Axe: `stone-axe.svg` → `axe.svg` (Lorc)
 - Pickaxe: `mining.svg` → `pickaxe.svg` (Lorc)
 - Smoke: `steam.svg` → `smoke.svg` (Delapouite)
@@ -35,5 +32,5 @@ Candidate icons added for upcoming systems:
 
 The Unity-ready PNGs in `Assets/Resources/ResourceIcons/` retain the original glyphs.
 They are adapted with a uniform inset, a dark circular field, a warm outline, and a
-resource-specific accent color so all eight icons remain readable on the map's varied
+resource-specific accent color so all icons remain readable on the map's varied
 terrain colors.

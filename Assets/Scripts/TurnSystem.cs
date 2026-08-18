@@ -6,36 +6,34 @@ namespace OldenTop
 {
     public enum Resource
     {
-        Grains,
         Aurochs,
+        Roots,
         Wood,
         Mushrooms,
-        Flintstone,
-        Firestone,
+        Stone,
         Fish,
-        Reeds
+        Shells
     }
 
     public static class ResourceCatalog
     {
         private static readonly Resource[][] Options =
         {
-            new[] { Resource.Grains, Resource.Aurochs },
+            new[] { Resource.Aurochs, Resource.Roots },
             new[] { Resource.Wood, Resource.Mushrooms },
-            new[] { Resource.Flintstone, Resource.Firestone },
-            new[] { Resource.Fish, Resource.Reeds }
+            new[] { Resource.Stone },
+            new[] { Resource.Fish, Resource.Shells }
         };
 
         private static readonly string[] IconResourcePaths =
         {
-            "ResourceIcons/grains",
             "ResourceIcons/aurochs",
+            "ResourceIcons/roots",
             "ResourceIcons/wood",
             "ResourceIcons/mushrooms",
             "ResourceIcons/flintstone",
-            "ResourceIcons/firestone",
             "ResourceIcons/fish",
-            "ResourceIcons/reeds"
+            "ResourceIcons/shells"
         };
 
         private static readonly Texture2D[] Icons = new Texture2D[IconResourcePaths.Length];
@@ -66,7 +64,7 @@ namespace OldenTop
 
         public static bool IsFood(Resource resource)
         {
-            return resource == Resource.Grains || resource == Resource.Aurochs ||
+            return resource == Resource.Roots || resource == Resource.Aurochs ||
                    resource == Resource.Mushrooms || resource == Resource.Fish;
         }
 
@@ -186,7 +184,7 @@ namespace OldenTop
 
     public static class ResourceSave
     {
-        private const int CurrentVersion = 3;
+        private const int CurrentVersion = 4;
         private const string LayoutKey = "OldenTop.TileResourceLayout";
 
         [Serializable]
@@ -195,23 +193,27 @@ namespace OldenTop
             public int version;
             public string mapSeed;
             public int[] resources;
+            public bool[] resourcePresent;
         }
 
-        public static Resource[] LoadOrCreate(string mapSeed, Terrain[] terrain)
+        public static Resource[] LoadOrCreate(string mapSeed, Terrain[] terrain, int width, int height,
+            out bool[] resourcePresent)
         {
-            if (TryLoad(mapSeed, terrain, out Resource[] choices))
+            if (TryLoad(mapSeed, terrain, width, height, out Resource[] choices, out resourcePresent))
             {
                 return choices;
             }
 
-            choices = CreateBalancedLayout(mapSeed, terrain);
-            Save(mapSeed, choices);
+            choices = CreateBalancedLayout(mapSeed, terrain, width, height, out resourcePresent);
+            Save(mapSeed, choices, resourcePresent);
             return choices;
         }
 
-        public static bool TryLoad(string mapSeed, Terrain[] terrain, out Resource[] choices)
+        public static bool TryLoad(string mapSeed, Terrain[] terrain, int width, int height,
+            out Resource[] choices, out bool[] resourcePresent)
         {
             choices = null;
+            resourcePresent = null;
             string json = PlayerPrefs.GetString(LayoutKey, string.Empty);
             if (string.IsNullOrEmpty(json))
             {
@@ -230,12 +232,17 @@ namespace OldenTop
 
             if (data == null || data.version != CurrentVersion ||
                 !string.Equals(data.mapSeed, mapSeed, StringComparison.Ordinal) ||
-                data.resources == null || data.resources.Length != terrain.Length)
+                width <= 0 || height <= 0 || width * height != terrain.Length ||
+                data.resources == null || data.resources.Length != terrain.Length ||
+                data.resourcePresent == null || data.resourcePresent.Length != terrain.Length)
             {
                 return false;
             }
 
             choices = new Resource[terrain.Length];
+            resourcePresent = new bool[terrain.Length];
+            int mountainTiles = 0;
+            int mountainSites = 0;
             for (int tile = 0; tile < terrain.Length; tile++)
             {
                 Resource resource = (Resource)data.resources[tile];
@@ -243,18 +250,57 @@ namespace OldenTop
                     !ResourceCatalog.IsAllowed(terrain[tile], resource))
                 {
                     choices = null;
+                    resourcePresent = null;
                     return false;
                 }
 
+                bool hasResource = data.resourcePresent[tile];
+                switch (terrain[tile])
+                {
+                    case Terrain.Mountain:
+                        mountainTiles++;
+                        if (hasResource)
+                        {
+                            mountainSites++;
+                        }
+                        break;
+                    case Terrain.Water:
+                        if (hasResource != IsShoreWaterTile(terrain, width, height, tile))
+                        {
+                            choices = null;
+                            resourcePresent = null;
+                            return false;
+                        }
+                        break;
+                    default:
+                        if (!hasResource)
+                        {
+                            choices = null;
+                            resourcePresent = null;
+                            return false;
+                        }
+                        break;
+                }
+
                 choices[tile] = resource;
+                resourcePresent[tile] = hasResource;
+            }
+
+            if (mountainSites != mountainTiles / 2)
+            {
+                choices = null;
+                resourcePresent = null;
+                return false;
             }
 
             return true;
         }
 
-        private static Resource[] CreateBalancedLayout(string mapSeed, Terrain[] terrain)
+        private static Resource[] CreateBalancedLayout(string mapSeed, Terrain[] terrain,
+            int width, int height, out bool[] resourcePresent)
         {
             Resource[] choices = new Resource[terrain.Length];
+            resourcePresent = new bool[terrain.Length];
             int numericSeed = MapSeedUtility.ToInt32(mapSeed);
             System.Random resourceRandom = new System.Random(unchecked(numericSeed ^ 0x5A17C9E3));
 
@@ -279,16 +325,79 @@ namespace OldenTop
                 }
 
                 Resource[] options = ResourceCatalog.GetOptions(terrainType);
-                for (int i = 0; i < tiles.Count; i++)
+                if (terrainType == Terrain.Mountain)
                 {
-                    choices[tiles[i]] = options[i % options.Length];
+                    int stoneSites = tiles.Count / 2;
+                    for (int i = 0; i < tiles.Count; i++)
+                    {
+                        choices[tiles[i]] = Resource.Stone;
+                        resourcePresent[tiles[i]] = i < stoneSites;
+                    }
+                }
+                else if (terrainType == Terrain.Water)
+                {
+                    int shoreSite = 0;
+                    for (int i = 0; i < tiles.Count; i++)
+                    {
+                        int tile = tiles[i];
+                        bool isShore = IsShoreWaterTile(terrain, width, height, tile);
+                        choices[tile] = isShore ? options[shoreSite % options.Length] : Resource.Fish;
+                        resourcePresent[tile] = isShore;
+                        if (isShore)
+                        {
+                            shoreSite++;
+                        }
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < tiles.Count; i++)
+                    {
+                        choices[tiles[i]] = options[i % options.Length];
+                        resourcePresent[tiles[i]] = true;
+                    }
                 }
             }
 
             return choices;
         }
 
-        private static void Save(string mapSeed, Resource[] choices)
+        public static bool IsShoreWaterTile(IReadOnlyList<Terrain> terrain, int width, int height, int tile)
+        {
+            if (terrain == null || width <= 0 || height <= 0 || width * height != terrain.Count ||
+                tile < 0 || tile >= terrain.Count || terrain[tile] != Terrain.Water)
+            {
+                return false;
+            }
+
+            for (int candidate = 0; candidate < terrain.Count; candidate++)
+            {
+                if (terrain[candidate] != Terrain.Water && GetHexDistance(tile, candidate, width) == 1)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static int GetHexDistance(int firstTile, int secondTile, int width)
+        {
+            int firstColumn = firstTile % width;
+            int firstRow = firstTile / width;
+            int secondColumn = secondTile % width;
+            int secondRow = secondTile / width;
+            int firstX = firstColumn - (firstRow - (firstRow & 1)) / 2;
+            int firstZ = firstRow;
+            int firstY = -firstX - firstZ;
+            int secondX = secondColumn - (secondRow - (secondRow & 1)) / 2;
+            int secondZ = secondRow;
+            int secondY = -secondX - secondZ;
+            return Math.Max(Math.Abs(firstX - secondX),
+                Math.Max(Math.Abs(firstY - secondY), Math.Abs(firstZ - secondZ)));
+        }
+
+        private static void Save(string mapSeed, Resource[] choices, bool[] resourcePresent)
         {
             int[] resourceIds = new int[choices.Length];
             for (int i = 0; i < choices.Length; i++)
@@ -300,7 +409,8 @@ namespace OldenTop
             {
                 version = CurrentVersion,
                 mapSeed = mapSeed,
-                resources = resourceIds
+                resources = resourceIds,
+                resourcePresent = resourcePresent
             };
             PlayerPrefs.SetString(LayoutKey, JsonUtility.ToJson(data));
             PlayerPrefs.Save();
@@ -316,7 +426,7 @@ namespace OldenTop
         private const float ResourceIconSize = 42f;
         private const float StockpileResourceIconSize = 56f;
         private const float StockpilePlayerLabelGap = 8f;
-        private const int ResourceTypeCount = 8;
+        private static readonly int ResourceTypeCount = Enum.GetValues(typeof(Resource)).Length;
         private const float InventoryWorkerIconSize = 48f;
         private const float MapWorkerIconSize = 32f;
         private const float WorkerEdgeInsetPixels = 2f;

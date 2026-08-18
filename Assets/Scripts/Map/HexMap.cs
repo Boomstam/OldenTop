@@ -52,6 +52,7 @@ namespace OldenTop
         private readonly SpriteRenderer[] tileHighlightRenderers = new SpriteRenderer[TileCount];
         private readonly SpriteRenderer[] tileOccupancyOutlineRenderers = new SpriteRenderer[TileCount];
         private Resource[] selectedResources = new Resource[TileCount];
+        private readonly bool[] naturalResourcePresent = CreateInitialResourcePresence();
         private readonly bool[] resourcePresent = CreateInitialResourcePresence();
 
         public int GeneratedTileCount => TileCount;
@@ -65,8 +66,9 @@ namespace OldenTop
             CreateSharedSprites();
             CalculateCenters();
             GenerateTerrain();
-            selectedResources = ResourceSave.LoadOrCreate(MapSeed, terrain);
-            ResetResourcePresence();
+            selectedResources = ResourceSave.LoadOrCreate(MapSeed, terrain, Width, Height,
+                out bool[] generatedResourcePresence);
+            ResetResourcePresence(generatedResourcePresence);
             BuildRiverGraph();
             GenerateRivers();
             ValidateRiverEdges();
@@ -638,8 +640,11 @@ namespace OldenTop
                 for (int column = 0; column < Width; column++)
                 {
                     int index = ToIndex(column, row);
-                    GameObject tileObject = new GameObject($"Hex {column:00},{row:00} - {terrain[index]} - " +
-                                                           ResourceCatalog.GetLabel(selectedResources[index]));
+                    string resourceLabel = resourcePresent[index]
+                        ? ResourceCatalog.GetLabel(selectedResources[index])
+                        : "No Resource";
+                    GameObject tileObject = new GameObject(
+                        $"Hex {column:00},{row:00} - {terrain[index]} - {resourceLabel}");
                     tileObjects[index] = tileObject;
                     tileObject.transform.SetParent(tileRoot, false);
                     tileObject.transform.localPosition = centers[index];
@@ -823,6 +828,11 @@ namespace OldenTop
             return tileIndex >= 0 && tileIndex < TileCount && resourcePresent[tileIndex];
         }
 
+        public bool IsShoreWaterTile(int tileIndex)
+        {
+            return ResourceSave.IsShoreWaterTile(terrain, Width, Height, tileIndex);
+        }
+
         public void RemoveResource(int tileIndex)
         {
             if (tileIndex < 0 || tileIndex >= TileCount)
@@ -845,12 +855,15 @@ namespace OldenTop
                 return;
             }
 
-            resourcePresent[tileIndex] = true;
+            resourcePresent[tileIndex] = naturalResourcePresent[tileIndex];
             if (tileObjects[tileIndex] != null)
             {
+                string resourceLabel = resourcePresent[tileIndex]
+                    ? ResourceCatalog.GetLabel(selectedResources[tileIndex])
+                    : "No Resource";
                 tileObjects[tileIndex].name = $"Hex {tileIndex % Width:00},{tileIndex / Width:00} - " +
                                               $"{terrain[tileIndex]} - " +
-                                              ResourceCatalog.GetLabel(selectedResources[tileIndex]);
+                                              resourceLabel;
             }
         }
 
@@ -978,11 +991,14 @@ namespace OldenTop
             return result;
         }
 
-        private void ResetResourcePresence()
+        private void ResetResourcePresence(IReadOnlyList<bool> generatedResourcePresence)
         {
             for (int tile = 0; tile < resourcePresent.Length; tile++)
             {
-                resourcePresent[tile] = true;
+                bool present = generatedResourcePresence != null && tile < generatedResourcePresence.Count &&
+                               generatedResourcePresence[tile];
+                naturalResourcePresent[tile] = present;
+                resourcePresent[tile] = present;
             }
         }
 
