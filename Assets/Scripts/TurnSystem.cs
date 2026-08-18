@@ -492,11 +492,13 @@ namespace OldenTop
         private string resolvedSeasonName;
         private int resolvedYear;
         private string statusMessage = "Player 1: place your hearth on any non-water hex.";
+        private bool statusIsWarning;
 
         private GUIStyle panelStyle;
         private GUIStyle titleStyle;
         private GUIStyle headingStyle;
         private GUIStyle bodyStyle;
+        private GUIStyle warningBodyStyle;
         private GUIStyle smallBodyStyle;
         private GUIStyle buttonStyle;
         private GUIStyle zoomButtonStyle;
@@ -519,6 +521,8 @@ namespace OldenTop
         public bool IsPlacingHearth => !resolutionPhase && hearthTiles[activePlayer] < 0;
         private bool CanRecallActiveHearth => !completedFirstTurn[activePlayer] && hearthTiles[activePlayer] >= 0;
         public int SelectedWorker => selectedWorker;
+        public string StatusMessage => statusMessage;
+        public bool StatusIsWarning => statusIsWarning;
         public float MapCameraSize => mapCamera != null ? mapCamera.orthographicSize : 0f;
         public float MinimumMapCameraSize => fittedCameraSize * MinimumZoomFraction;
         public float MaximumMapCameraSize => fittedCameraSize * MaximumZoomFraction;
@@ -552,6 +556,12 @@ namespace OldenTop
             }
         }
 
+        private void SetStatusMessage(string message, bool isWarning = false)
+        {
+            statusMessage = message;
+            statusIsWarning = isWarning;
+        }
+
         public void Initialize(HexMap hexMap, Camera cameraOverride = null)
         {
             map = hexMap;
@@ -572,7 +582,7 @@ namespace OldenTop
             ClearWorkerInteraction();
             map?.ClearTileHighlights();
             map?.ClearTileOccupancyOutlines();
-            statusMessage = "Player 1: place your hearth on any non-water hex.";
+            SetStatusMessage("Player 1: place your hearth on any non-water hex.");
         }
 
         private void Awake()
@@ -662,7 +672,8 @@ namespace OldenTop
             GUI.color = previousColor;
             y += 58f;
 
-            GUI.Label(new Rect(x, y, contentWidth, 86f), statusMessage, bodyStyle);
+            GUI.Label(new Rect(x, y, contentWidth, 86f), statusMessage,
+                statusIsWarning ? warningBodyStyle : bodyStyle);
             y += 94f;
 
             GUI.Label(new Rect(x, y, contentWidth, 42f), "STOCKPILES", headingStyle);
@@ -817,7 +828,7 @@ namespace OldenTop
                 (pressedWorker >= 0 || draggingWorker >= 0))
             {
                 ClearPointerState();
-                statusMessage = "Worker placement cancelled.";
+                SetStatusMessage("Worker placement cancelled.");
                 current.Use();
                 return;
             }
@@ -826,7 +837,7 @@ namespace OldenTop
                 Vector2.Distance(workerPressPosition, current.mousePosition) >= DragThreshold)
             {
                 draggingWorker = pressedWorker;
-                statusMessage = "Drop the worker onto an available slot, or elsewhere to cancel the move.";
+                SetStatusMessage("Drop the worker onto an available slot, or elsewhere to cancel the move.");
                 current.Use();
                 return;
             }
@@ -869,7 +880,7 @@ namespace OldenTop
                 (pressedFoodResource >= 0 || draggingFoodResource >= 0))
             {
                 ClearFoodPointerState();
-                statusMessage = "Food assignment cancelled.";
+                SetStatusMessage("Food assignment cancelled.");
                 current.Use();
                 return;
             }
@@ -878,9 +889,9 @@ namespace OldenTop
                 Vector2.Distance(foodPressPosition, current.mousePosition) >= DragThreshold)
             {
                 draggingFoodResource = pressedFoodResource;
-                statusMessage = draggingFoodResource == (int)Resource.Wood
+                SetStatusMessage(draggingFoodResource == (int)Resource.Wood
                     ? "Drop the wood onto your hearth."
-                    : "Drop the food onto one of your workers.";
+                    : "Drop the food onto one of your workers.");
                 current.Use();
                 return;
             }
@@ -900,9 +911,9 @@ namespace OldenTop
                 }
                 else
                 {
-                    statusMessage = resource == (int)Resource.Wood
+                    SetStatusMessage(resource == (int)Resource.Wood
                         ? "Wood assignment cancelled. Drop wood onto your hearth."
-                        : "Food assignment cancelled. Drop food onto one of your workers.";
+                        : "Food assignment cancelled. Drop food onto one of your workers.");
                 }
 
                 ClearFoodPointerState();
@@ -1649,19 +1660,19 @@ namespace OldenTop
             int distance = map.GetHexDistance(turnStartTile, tile);
             if (turnStartTile < 0 || distance > WorkerMoveRange)
             {
-                statusMessage = "That hex is not highlighted. A worker may stay or move one tile.";
+                SetStatusMessage("That hex is not highlighted. A worker may stay or move one tile.", isWarning: true);
                 return false;
             }
 
             if (IsTileOccupiedByOtherPlayer(tile))
             {
-                statusMessage = "That hex is occupied by the other player.";
+                SetStatusMessage("That hex is occupied by the other player.", isWarning: true);
                 return false;
             }
 
             if (IsTileSlotOccupied(tile, slot))
             {
-                statusMessage = "That slot is already occupied.";
+                SetStatusMessage("That slot is already occupied.", isWarning: true);
                 return false;
             }
 
@@ -1681,14 +1692,14 @@ namespace OldenTop
             {
                 int nextWorker = FindNextUnplacedWorker(worker);
                 selectedWorker = nextWorker;
-                statusMessage = nextWorker >= 0
+                SetStatusMessage(nextWorker >= 0
                     ? $"{placementMessage} The next worker is selected."
-                    : $"{placementMessage} All workers are placed.";
+                    : $"{placementMessage} All workers are placed.");
             }
             else
             {
                 selectedWorker = worker;
-                statusMessage = placementMessage;
+                SetStatusMessage(placementMessage);
             }
 
             UpdateOccupiedTileOutlines();
@@ -1719,7 +1730,7 @@ namespace OldenTop
             }
 
             selectedWorker = worker;
-            statusMessage = "Worker selected. Choose an available slot.";
+            SetStatusMessage("Worker selected. Choose an available slot.");
             UpdateWorkerPlacementHighlights();
             return true;
         }
@@ -1736,7 +1747,7 @@ namespace OldenTop
             assignmentSlots[activePlayer, worker] = turnStartSlots[activePlayer, worker];
             workerPlacedThisTurn[activePlayer, worker] = false;
             selectedWorker = worker;
-            statusMessage = "The worker's move was reset. Choose an available slot.";
+            SetStatusMessage("The worker's move was reset. Choose an available slot.");
             UpdateOccupiedTileOutlines();
             UpdateWorkerPlacementHighlights();
             return true;
@@ -1762,13 +1773,13 @@ namespace OldenTop
 
             if (map.GetTerrain(tile) == Terrain.Water)
             {
-                statusMessage = "A hearth cannot be placed on water. Choose a land hex.";
+                SetStatusMessage("A hearth cannot be placed on water. Choose a land hex.", isWarning: true);
                 return false;
             }
 
             if (IsTileOccupiedByOtherPlayer(tile))
             {
-                statusMessage = "That hex is occupied by the other player. Choose another land hex.";
+                SetStatusMessage("That hex is occupied by the other player. Choose another land hex.", isWarning: true);
                 return false;
             }
 
@@ -1785,7 +1796,7 @@ namespace OldenTop
             }
 
             selectedWorker = 0;
-            statusMessage = "Hearth placed. All workers begin there; one worker is selected.";
+            SetStatusMessage("Hearth placed. All workers begin there; one worker is selected.");
             UpdateOccupiedTileOutlines();
             UpdateWorkerPlacementHighlights();
             return true;
@@ -1801,7 +1812,7 @@ namespace OldenTop
 
             if (IsPlacingHearth)
             {
-                statusMessage = "Place your hearth before beginning your first assignments.";
+                SetStatusMessage("Place your hearth before beginning your first assignments.", isWarning: true);
                 return;
             }
 
@@ -1940,13 +1951,13 @@ namespace OldenTop
             int previouslyAssigned = assignedFood[activePlayer, worker];
             if (previouslyAssigned == foodIndex)
             {
-                statusMessage = "That worker already has this food assigned.";
+                SetStatusMessage("That worker already has this food assigned.", isWarning: true);
                 return false;
             }
 
             if (resourceStockpiles[activePlayer, foodIndex] <= 0)
             {
-                statusMessage = $"No {ResourceCatalog.GetLabel(food)} remains in this stockpile.";
+                SetStatusMessage($"No {ResourceCatalog.GetLabel(food)} remains in this stockpile.", isWarning: true);
                 return false;
             }
 
@@ -1958,7 +1969,7 @@ namespace OldenTop
             resourceStockpiles[activePlayer, foodIndex]--;
             assignedFood[activePlayer, worker] = foodIndex;
             selectedFoodResource = foodIndex;
-            statusMessage = $"Assigned {ResourceCatalog.GetLabel(food)} to a worker.";
+            SetStatusMessage($"Assigned {ResourceCatalog.GetLabel(food)} to a worker.");
             return true;
         }
 
@@ -1971,21 +1982,21 @@ namespace OldenTop
 
             if (assignedHearthFuel[activePlayer])
             {
-                statusMessage = "This hearth already has wood assigned.";
+                SetStatusMessage("This hearth already has wood assigned.", isWarning: true);
                 return false;
             }
 
             int woodIndex = (int)Resource.Wood;
             if (resourceStockpiles[activePlayer, woodIndex] <= 0)
             {
-                statusMessage = "No Wood remains in this stockpile.";
+                SetStatusMessage("No Wood remains in this stockpile.", isWarning: true);
                 return false;
             }
 
             resourceStockpiles[activePlayer, woodIndex]--;
             assignedHearthFuel[activePlayer] = true;
             selectedFoodResource = woodIndex;
-            statusMessage = "Assigned Wood to the hearth.";
+            SetStatusMessage("Assigned Wood to the hearth.");
             return true;
         }
 
@@ -1993,11 +2004,11 @@ namespace OldenTop
         {
             if (selectedFoodResource < 0)
             {
-                statusMessage = "Select a food stockpile first.";
+                SetStatusMessage("Select a food stockpile first.", isWarning: true);
             }
             else if (!ResourceCatalog.IsFood((Resource)selectedFoodResource))
             {
-                statusMessage = "Wood can only be assigned to your hearth.";
+                SetStatusMessage("Wood can only be assigned to your hearth.", isWarning: true);
             }
             else
             {
@@ -2011,7 +2022,7 @@ namespace OldenTop
         {
             if (selectedFoodResource != (int)Resource.Wood)
             {
-                statusMessage = "Select Wood from your stockpile first.";
+                SetStatusMessage("Select Wood from your stockpile first.", isWarning: true);
             }
             else
             {
@@ -2032,7 +2043,7 @@ namespace OldenTop
 
             if (resourceStockpiles[activePlayer, foodIndex] <= 0)
             {
-                statusMessage = $"No {ResourceCatalog.GetLabel(food)} remains in this stockpile.";
+                SetStatusMessage($"No {ResourceCatalog.GetLabel(food)} remains in this stockpile.", isWarning: true);
                 current.Use();
                 return;
             }
@@ -2040,9 +2051,9 @@ namespace OldenTop
             selectedFoodResource = foodIndex;
             pressedFoodResource = foodIndex;
             foodPressPosition = current.mousePosition;
-            statusMessage = food == Resource.Wood
+            SetStatusMessage(food == Resource.Wood
                 ? "Wood selected. Click or drag it onto your hearth."
-                : $"{ResourceCatalog.GetLabel(food)} selected. Click or drag it onto a worker.";
+                : $"{ResourceCatalog.GetLabel(food)} selected. Click or drag it onto a worker.");
             current.Use();
         }
 
@@ -2117,9 +2128,9 @@ namespace OldenTop
             if (activePlayer < PlayerCount - 1)
             {
                 activePlayer++;
-                statusMessage = hearthWentOut
+                SetStatusMessage(hearthWentOut
                     ? $"The hearth went out. Player {activePlayer + 1}: assign food and wood."
-                    : $"Player {activePlayer + 1}: assign food to workers and wood to the hearth.";
+                    : $"Player {activePlayer + 1}: assign food to workers and wood to the hearth.");
                 return;
             }
 
@@ -2174,7 +2185,7 @@ namespace OldenTop
             }
 
             selectedFoodResource = -1;
-            statusMessage = "Food and fuel assignments cleared. Choose a stockpile to assign again.";
+            SetStatusMessage("Food and fuel assignments cleared. Choose a stockpile to assign again.");
         }
 
         private void BeginFoodAssignments()
@@ -2191,7 +2202,7 @@ namespace OldenTop
                 }
             }
 
-            statusMessage = "Player 1: assign food to every worker and Wood to the hearth.";
+            SetStatusMessage("Player 1: assign food to every worker and Wood to the hearth.");
         }
 
         private void DrawFoodShortageDialog()
@@ -2247,7 +2258,7 @@ namespace OldenTop
                 }
 
                 ClearWorkerInteraction();
-                statusMessage = $"Player {activePlayer + 1}: place your hearth on any non-water hex.";
+                SetStatusMessage($"Player {activePlayer + 1}: place your hearth on any non-water hex.");
                 UpdateOccupiedTileOutlines();
                 return;
             }
@@ -2261,7 +2272,7 @@ namespace OldenTop
 
             selectedWorker = 0;
             ClearPointerState();
-            statusMessage = "All worker moves were reset. A worker is selected.";
+            SetStatusMessage("All worker moves were reset. A worker is selected.");
             UpdateOccupiedTileOutlines();
             UpdateWorkerPlacementHighlights();
         }
@@ -2298,18 +2309,18 @@ namespace OldenTop
             foodAssignmentPhase = false;
             if (hearthTiles[activePlayer] < 0)
             {
-                statusMessage = $"Player {activePlayer + 1}: place your hearth on any non-water hex.";
+                SetStatusMessage($"Player {activePlayer + 1}: place your hearth on any non-water hex.");
                 return;
             }
 
             selectedWorker = FindFirstAliveWorker(activePlayer);
             if (selectedWorker < 0)
             {
-                statusMessage = $"Player {activePlayer + 1} has no living workers. End assignments to continue.";
+                SetStatusMessage($"Player {activePlayer + 1} has no living workers. End assignments to continue.");
                 return;
             }
 
-            statusMessage = $"Player {activePlayer + 1}: a worker is selected. Choose an available slot.";
+            SetStatusMessage($"Player {activePlayer + 1}: a worker is selected. Choose an available slot.");
             UpdateWorkerPlacementHighlights();
         }
 
@@ -2594,6 +2605,10 @@ namespace OldenTop
                 fontSize = 26,
                 wordWrap = true,
                 normal = { textColor = new Color32(210, 207, 196, 255) }
+            };
+            warningBodyStyle = new GUIStyle(bodyStyle)
+            {
+                normal = { textColor = new Color32(235, 75, 75, 255) }
             };
             smallBodyStyle = new GUIStyle(bodyStyle)
             {

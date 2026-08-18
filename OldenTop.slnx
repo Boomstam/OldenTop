@@ -9,5 +9,4 @@
   <Project Path="Assembly-CSharp.csproj" />
   <Project Path="Extensions.Unity.PlayerPrefsEx.Editor.Tests.csproj" />
   <Project Path="com.IvanMurzak.Unity.MCP.Tests.csproj" />
-  <Project Path="Assembly-CSharp-Editor.csproj" />
 </Solution>
