@@ -431,6 +431,7 @@ namespace OldenTop
         private const float MapWorkerIconSize = 32f;
         private const float WorkerEdgeInsetPixels = 2f;
         private const float SelectionPulseSpeed = 4.25f;
+        private static readonly Color UnfulfilledFlashColor = new Color32(235, 75, 75, 255);
         private const float HearthMarkerSize = 38f;
         private const int WorkerMoveRange = 1;
         private const int TileContentSlotCount = 6;
@@ -777,6 +778,10 @@ namespace OldenTop
             DrawWorkerIcon(rect, activePlayer, placedThisTurn,
                 placedThisTurn ? "placed this turn" : "ready to move", selected);
             DrawAssignedFoodOverlay(rect, activePlayer, worker);
+            if (foodAssignmentPhase && assignedFood[activePlayer, worker] < 0)
+            {
+                DrawUnfulfilledFlash(rect);
+            }
 
             Event current = Event.current;
             if (current.type == EventType.MouseDown && current.button == 0 && rect.Contains(current.mousePosition))
@@ -1290,6 +1295,10 @@ namespace OldenTop
                             Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
                         DrawWorkerIcon(marker, player, false, "placed", selected);
                         DrawAssignedFoodOverlay(marker, player, worker);
+                        if (foodAssignmentPhase && player == activePlayer && assignedFood[player, worker] < 0)
+                        {
+                            DrawUnfulfilledFlash(marker);
+                        }
 
                         Event current = Event.current;
                         if (!resolutionPhase && player == activePlayer && current.type == EventType.MouseDown &&
@@ -1417,6 +1426,10 @@ namespace OldenTop
                 }
 
                 DrawAssignedHearthFuelOverlay(marker, player);
+                if (foodAssignmentPhase && player == activePlayer && !assignedHearthFuel[player])
+                {
+                    DrawUnfulfilledFlash(marker);
+                }
 
                 Event current = Event.current;
                 if (foodAssignmentPhase && player == activePlayer && current.type == EventType.MouseDown &&
@@ -1618,6 +1631,28 @@ namespace OldenTop
             Rect innerRing = new Rect(rect.x + rect.width * 0.07f, rect.y + rect.height * 0.07f,
                 rect.width * 0.86f, rect.height * 0.86f);
             GUI.color = new Color(1f, 1f, 1f, 0.12f + pulse * 0.2f);
+            GUI.DrawTexture(innerRing, iconOutlineTexture, ScaleMode.ScaleToFit, true);
+            GUI.color = previousColor;
+        }
+
+        private void DrawUnfulfilledFlash(Rect rect)
+        {
+            if (iconOutlineTexture == null)
+            {
+                return;
+            }
+
+            float pulse = 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * SelectionPulseSpeed);
+            Color flash = Color.Lerp(UnfulfilledFlashColor, Color.white, 0.15f + pulse * 0.3f);
+            flash.a = 0.55f + pulse * 0.4f;
+
+            Color previousColor = GUI.color;
+            GUI.color = flash;
+            GUI.DrawTexture(rect, iconOutlineTexture, ScaleMode.ScaleToFit, true);
+
+            Rect innerRing = new Rect(rect.x + rect.width * 0.07f, rect.y + rect.height * 0.07f,
+                rect.width * 0.86f, rect.height * 0.86f);
+            GUI.color = new Color(1f, 0.2f, 0.2f, 0.08f + pulse * 0.18f);
             GUI.DrawTexture(innerRing, iconOutlineTexture, ScaleMode.ScaleToFit, true);
             GUI.color = previousColor;
         }
