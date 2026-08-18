@@ -18,7 +18,117 @@ namespace OldenTop
     public enum WorkerAction
     {
         Gather,
-        Preserve
+        Preserve,
+        Craft
+    }
+
+    public enum Tool
+    {
+        Axe,
+        Basket,
+        Pickaxe,
+        Nets
+    }
+
+    public static class ToolCatalog
+    {
+        private static readonly Tool[] AllTools = { Tool.Axe, Tool.Basket, Tool.Pickaxe, Tool.Nets };
+        private static readonly string[] IconResourcePaths =
+        {
+            "ToolIcons/axe",
+            "ToolIcons/basket",
+            "ToolIcons/pickaxe",
+            "ToolIcons/nets"
+        };
+        private static readonly Texture2D[] Icons = new Texture2D[IconResourcePaths.Length];
+
+        public static IReadOnlyList<Tool> All => AllTools;
+
+        public static Texture2D GetIcon(Tool tool)
+        {
+            int index = (int)tool;
+            if (index < 0 || index >= Icons.Length)
+            {
+                return null;
+            }
+
+            if (Icons[index] == null)
+            {
+                Icons[index] = Resources.Load<Texture2D>(IconResourcePaths[index]);
+            }
+
+            return Icons[index];
+        }
+
+        public static bool IsAppropriateFor(Tool tool, Resource resource)
+        {
+            return (tool == Tool.Axe && (resource == Resource.Wood || resource == Resource.Aurochs)) ||
+                   (tool == Tool.Basket && (resource == Resource.Mushrooms || resource == Resource.Shells)) ||
+                   (tool == Tool.Pickaxe && (resource == Resource.Stone || resource == Resource.Roots)) ||
+                   (tool == Tool.Nets && resource == Resource.Fish);
+        }
+
+        public static bool CanCraft(Tool tool, int[,] stockpiles, int player)
+        {
+            foreach (Resource cost in GetCosts(tool))
+            {
+                if (stockpiles[player, (int)cost] < GetCostAmount(tool, cost))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public static IEnumerable<Resource> GetCosts(Tool tool)
+        {
+            switch (tool)
+            {
+                case Tool.Axe:
+                case Tool.Pickaxe:
+                    yield return Resource.Stone;
+                    yield return Resource.Wood;
+                    break;
+                case Tool.Basket:
+                case Tool.Nets:
+                    yield return Resource.Roots;
+                    break;
+            }
+        }
+
+        public static int GetCostAmount(Tool tool, Resource resource)
+        {
+            return (tool == Tool.Basket || tool == Tool.Nets) && resource == Resource.Roots ? 2 : 1;
+        }
+
+        public static bool UsesCost(Tool tool, Resource resource)
+        {
+            foreach (Resource cost in GetCosts(tool))
+            {
+                if (cost == resource)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public static string GetCostLabel(Tool tool)
+        {
+            switch (tool)
+            {
+                case Tool.Axe:
+                case Tool.Pickaxe:
+                    return "1 Stone • 1 Wood";
+                case Tool.Basket:
+                case Tool.Nets:
+                    return "2 Roots";
+                default:
+                    return string.Empty;
+            }
+        }
     }
 
     public static class ResourceCatalog
@@ -433,6 +543,7 @@ namespace OldenTop
         private const float StockpileResourceIconSize = 56f;
         private const float StockpilePlayerLabelGap = 8f;
         private static readonly int ResourceTypeCount = Enum.GetValues(typeof(Resource)).Length;
+        private static readonly int ToolTypeCount = Enum.GetValues(typeof(Tool)).Length;
         private const float InventoryWorkerIconSize = 48f;
         private const float MapWorkerIconSize = 32f;
         private const float WorkerEdgeInsetPixels = 2f;
@@ -469,8 +580,10 @@ namespace OldenTop
         private readonly bool[,] workerPlacedThisTurn = new bool[PlayerCount, WorkersPerPlayer];
         private readonly bool[,] workerAlive = new bool[PlayerCount, WorkersPerPlayer];
         private readonly WorkerAction[,] workerActions = new WorkerAction[PlayerCount, WorkersPerPlayer];
+        private readonly int[,] craftTools = new int[PlayerCount, WorkersPerPlayer];
         private readonly int[,] preserveTargetWorkers = new int[PlayerCount, WorkersPerPlayer];
         private readonly int[,] assignedFood = new int[PlayerCount, WorkersPerPlayer];
+        private readonly int[,] workerTools = new int[PlayerCount, WorkersPerPlayer];
         private readonly bool[,] assignedFoodWasPreserved = new bool[PlayerCount, WorkersPerPlayer];
         private readonly bool[] assignedHearthFuel = new bool[PlayerCount];
         private readonly bool[] completedFirstTurn = new bool[PlayerCount];
@@ -479,7 +592,10 @@ namespace OldenTop
         private readonly int[,] preservedFoodStockpiles = new int[PlayerCount, ResourceTypeCount];
         private readonly int[,] latestSeasonGains = new int[PlayerCount, ResourceTypeCount];
         private readonly int[,] latestPreservedSeasonGains = new int[PlayerCount, ResourceTypeCount];
+        private readonly int[,] toolStockpiles = new int[PlayerCount, ToolTypeCount];
+        private readonly int[,] latestSeasonToolGains = new int[PlayerCount, ToolTypeCount];
         private readonly int[] ancestorCounts = new int[PlayerCount];
+        private readonly int[,] ancestorToolCounts = new int[PlayerCount, ToolTypeCount];
         private readonly int[] hearthTiles = { -1, -1 };
         private readonly List<int> highlightedTiles = new List<int>(7);
         private readonly List<int>[] occupiedTilesByPlayer =
@@ -495,12 +611,16 @@ namespace OldenTop
         private int year = 1;
         private int selectedWorker = -1;
         private int selectedFoodResource = -1;
+        private int selectedTool = -1;
         private int pressedWorker = -1;
         private int draggingWorker = -1;
         private int pressedFoodResource = -1;
         private int draggingFoodResource = -1;
+        private int pressedTool = -1;
+        private int draggingTool = -1;
         private Vector2 workerPressPosition;
         private Vector2 foodPressPosition;
+        private Vector2 toolPressPosition;
         private float fittedCameraSize = 1f;
         private bool resolutionPhase;
         private bool foodAssignmentPhase;
@@ -598,6 +718,7 @@ namespace OldenTop
             ClearStockpiles();
             ClearLatestSeasonGains();
             Array.Clear(ancestorCounts, 0, ancestorCounts.Length);
+            Array.Clear(ancestorToolCounts, 0, ancestorToolCounts.Length);
             showSeasonGainsDialog = false;
             showFoodShortageDialog = false;
             foodAssignmentPhase = false;
@@ -664,6 +785,10 @@ namespace OldenTop
                 {
                     DrawFoodDragGhost(Event.current.mousePosition);
                 }
+                else if (draggingTool >= 0)
+                {
+                    DrawToolDragGhost(Event.current.mousePosition);
+                }
 
                 DrawTooltip(Event.current.mousePosition);
             }
@@ -710,6 +835,7 @@ namespace OldenTop
             for (int player = 0; player < PlayerCount; player++)
             {
                 y += DrawPlayerStockpile(x + 8f, y, contentWidth - 8f, player);
+                y += DrawPlayerToolStockpile(x + 8f, y, contentWidth - 8f, player);
             }
 
             y += 14f;
@@ -806,6 +932,7 @@ namespace OldenTop
             DrawWorkerIcon(rect, activePlayer, placedThisTurn,
                 placedThisTurn ? "placed this turn" : "ready to move", selected);
             DrawAssignedFoodOverlay(rect, activePlayer, worker);
+            DrawWorkerToolOverlay(rect, activePlayer, worker);
             if (foodAssignmentPhase && assignedFood[activePlayer, worker] < 0)
             {
                 DrawUnfulfilledFlash(rect);
@@ -817,7 +944,7 @@ namespace OldenTop
             {
                 if (foodAssignmentPhase)
                 {
-                    TryAssignSelectedFoodToActiveWorker(worker, current);
+                    TryAssignSelectedProvisionToActiveWorker(worker, current);
                 }
                 else
                 {
@@ -909,7 +1036,12 @@ namespace OldenTop
 
             if (current.type == EventType.MouseUp && current.button == 0 && pressedWorker >= 0)
             {
+                int worker = pressedWorker;
                 ClearPointerState();
+                if (workerPlacedThisTurn[activePlayer, worker])
+                {
+                    OpenWorkerActionMenu(worker);
+                }
                 current.Use();
                 return;
             }
@@ -925,10 +1057,43 @@ namespace OldenTop
         private void HandleFoodPointerInteraction(Event current)
         {
             if (current.type == EventType.KeyDown && current.keyCode == KeyCode.Escape &&
-                (pressedFoodResource >= 0 || draggingFoodResource >= 0))
+                (pressedFoodResource >= 0 || draggingFoodResource >= 0 || pressedTool >= 0 || draggingTool >= 0))
             {
                 ClearFoodPointerState();
-                SetStatusMessage("Food assignment cancelled.");
+                ClearToolPointerState();
+                SetStatusMessage("Provision assignment cancelled.");
+                current.Use();
+                return;
+            }
+
+            if (current.type == EventType.MouseDrag && pressedTool >= 0 &&
+                Vector2.Distance(toolPressPosition, current.mousePosition) >= DragThreshold)
+            {
+                draggingTool = pressedTool;
+                SetStatusMessage("Drop the tool onto a worker who does not already have one.");
+                current.Use();
+                return;
+            }
+
+            if (current.type == EventType.MouseUp && current.button == 0 && draggingTool >= 0)
+            {
+                if (TryGetActiveWorkerAtGuiPosition(current.mousePosition, out int worker))
+                {
+                    TryAssignToolToActiveWorker(worker, (Tool)draggingTool);
+                }
+                else
+                {
+                    SetStatusMessage("Tool assignment cancelled. Drop it onto a worker.");
+                }
+
+                ClearToolPointerState();
+                current.Use();
+                return;
+            }
+
+            if (current.type == EventType.MouseUp && current.button == 0 && pressedTool >= 0)
+            {
+                pressedTool = -1;
                 current.Use();
                 return;
             }
@@ -1043,6 +1208,24 @@ namespace OldenTop
             }
         }
 
+        private void DrawToolIcon(Rect rect, Tool tool)
+        {
+            Texture2D icon = ToolCatalog.GetIcon(tool);
+            if (icon != null)
+            {
+                GUI.DrawTexture(rect, icon, ScaleMode.ScaleToFit, true);
+            }
+            else
+            {
+                GUI.Label(rect, "?", resourceFallbackStyle);
+            }
+
+            if (rect.Contains(Event.current.mousePosition))
+            {
+                hoveredTooltip = tool.ToString();
+            }
+        }
+
         private float DrawPlayerStockpile(float x, float y, float width, int player)
         {
             const float headingHeight = 30f;
@@ -1136,6 +1319,52 @@ namespace OldenTop
             return false;
         }
 
+        private float DrawPlayerToolStockpile(float x, float y, float width, int player)
+        {
+            const float headingHeight = 24f;
+            const float horizontalGap = 10f;
+            GUI.Label(new Rect(x, y, width, headingHeight), "TOOLS", smallBodyStyle);
+            for (int toolIndex = 0; toolIndex < ToolTypeCount; toolIndex++)
+            {
+                Rect iconRect = new Rect(x + toolIndex * (StockpileResourceIconSize + horizontalGap),
+                    y + headingHeight, StockpileResourceIconSize, StockpileResourceIconSize);
+                DrawToolStockpileIcon(iconRect, (Tool)toolIndex, toolStockpiles[player, toolIndex], player);
+            }
+
+            return headingHeight + StockpileResourceIconSize + 14f;
+        }
+
+        private void DrawToolStockpileIcon(Rect rect, Tool tool, int amount, int player)
+        {
+            Color previousColor = GUI.color;
+            if (amount == 0)
+            {
+                GUI.color = new Color(0.42f, 0.42f, 0.42f, 0.48f);
+            }
+
+            DrawToolIcon(rect, tool);
+            Rect countRect = new Rect(rect.x + rect.width * 0.34f, rect.y + rect.height * 0.34f,
+                rect.width * 0.58f, rect.height * 0.58f);
+            GUI.Label(new Rect(countRect.x + 1.5f, countRect.y + 1.5f, countRect.width, countRect.height),
+                amount.ToString(), stockpileCountShadowStyle);
+            GUI.Label(countRect, amount.ToString(), stockpileCountStyle);
+
+            bool canAssignTool = foodAssignmentPhase && player == activePlayer;
+            if (canAssignTool && selectedTool == (int)tool)
+            {
+                DrawSelectedWorkerHighlight(rect, activePlayer);
+            }
+
+            Event current = Event.current;
+            if (canAssignTool && current.type == EventType.MouseDown && current.button == 0 &&
+                rect.Contains(current.mousePosition))
+            {
+                BeginToolPress(tool, current);
+            }
+
+            GUI.color = previousColor;
+        }
+
         private void DrawWorkerActionMenu()
         {
             if (actionMenuWorker < 0 || actionMenuWorker >= WorkersPerPlayer ||
@@ -1152,9 +1381,18 @@ namespace OldenTop
                 return;
             }
 
-            float width = Mathf.Min(380f, Screen.width - 40f);
-            float height = tile == hearthTiles[activePlayer] && HasEligiblePreserveTarget(actionMenuWorker)
-                ? 188f : 128f;
+            List<Tool> craftableTools = new List<Tool>();
+            foreach (Tool tool in ToolCatalog.All)
+            {
+                if (CanCraftWithCommittedCosts(tool, actionMenuWorker))
+                {
+                    craftableTools.Add(tool);
+                }
+            }
+
+            bool canPreserve = tile == hearthTiles[activePlayer] && HasEligiblePreserveTarget(actionMenuWorker);
+            float width = Mathf.Min(420f, Screen.width - 40f);
+            float height = 156f + craftableTools.Count * 52f + (canPreserve ? 56f : 0f);
             Rect dialog = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
             GUI.color = new Color32(20, 22, 20, 248);
             GUI.DrawTexture(dialog, Texture2D.whiteTexture, ScaleMode.StretchToFill);
@@ -1175,7 +1413,33 @@ namespace OldenTop
                 CloseWorkerActionMenu();
             }
 
-            if (height > 128f && GUI.Button(new Rect(x, dialog.y + 104f, contentWidth, 48f), "Preserve adjacent food", buttonStyle))
+            float actionY = dialog.y + 104f;
+            GUI.Label(new Rect(x, actionY, contentWidth, 24f), "CRAFT A TOOL", smallBodyStyle);
+            actionY += 26f;
+            if (craftableTools.Count == 0)
+            {
+                GUI.Label(new Rect(x, actionY, contentWidth, 30f), "No tools can be crafted with this stockpile.", bodyStyle);
+                actionY += 38f;
+            }
+            else
+            {
+                for (int i = 0; i < craftableTools.Count; i++)
+                {
+                    Tool tool = craftableTools[i];
+                    Rect buttonRect = new Rect(x, actionY, contentWidth, 46f);
+                    if (GUI.Button(buttonRect, $"      {tool}     {ToolCatalog.GetCostLabel(tool)}", buttonStyle))
+                    {
+                        SetWorkerActionToCraft(actionMenuWorker, tool);
+                        SetStatusMessage($"Craft {tool} selected. It will enter the tool stockpile this season.");
+                        CloseWorkerActionMenu();
+                    }
+
+                    DrawToolIcon(new Rect(buttonRect.x + 8f, buttonRect.y + 5f, 36f, 36f), tool);
+                    actionY += 52f;
+                }
+            }
+
+            if (canPreserve && GUI.Button(new Rect(x, actionY, contentWidth, 48f), "Preserve adjacent food", buttonStyle))
             {
                 BeginPreserveTargetSelection(actionMenuWorker);
             }
@@ -1231,6 +1495,7 @@ namespace OldenTop
         private void SetWorkerActionToGather(int worker)
         {
             workerActions[activePlayer, worker] = WorkerAction.Gather;
+            craftTools[activePlayer, worker] = -1;
             preserveTargetWorkers[activePlayer, worker] = -1;
             for (int candidate = 0; candidate < WorkersPerPlayer; candidate++)
             {
@@ -1240,6 +1505,42 @@ namespace OldenTop
                     preserveTargetWorkers[activePlayer, candidate] = -1;
                 }
             }
+        }
+
+        private void SetWorkerActionToCraft(int worker, Tool tool)
+        {
+            workerActions[activePlayer, worker] = WorkerAction.Craft;
+            craftTools[activePlayer, worker] = (int)tool;
+            preserveTargetWorkers[activePlayer, worker] = -1;
+        }
+
+        private bool CanCraftWithCommittedCosts(Tool tool, int craftingWorker)
+        {
+            foreach (Resource cost in ToolCatalog.GetCosts(tool))
+            {
+                int available = resourceStockpiles[activePlayer, (int)cost];
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
+                    if (worker == craftingWorker || workerActions[activePlayer, worker] != WorkerAction.Craft)
+                    {
+                        continue;
+                    }
+
+                    int committedTool = craftTools[activePlayer, worker];
+                    if (committedTool >= 0 && committedTool < ToolTypeCount &&
+                        ToolCatalog.UsesCost((Tool)committedTool, cost))
+                    {
+                        available -= ToolCatalog.GetCostAmount((Tool)committedTool, cost);
+                    }
+                }
+
+                if (available < ToolCatalog.GetCostAmount(tool, cost))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private bool HasEligiblePreserveTarget(int preserver)
@@ -1297,6 +1598,7 @@ namespace OldenTop
             }
 
             workerActions[activePlayer, actionMenuWorker] = WorkerAction.Preserve;
+            craftTools[activePlayer, actionMenuWorker] = -1;
             preserveTargetWorkers[activePlayer, actionMenuWorker] = target;
             selectingPreserveTarget = false;
             actionMenuWorker = -1;
@@ -1314,7 +1616,24 @@ namespace OldenTop
             GUI.Label(new Rect(x + iconSize + 8f, y, width - iconSize - 8f, iconSize),
                 $"Player {player + 1}: {ancestorCounts[player]}", smallBodyStyle);
             GUI.color = previousColor;
-            return iconSize + 4f;
+
+            int displayedTools = 0;
+            for (int toolIndex = 0; toolIndex < ToolTypeCount; toolIndex++)
+            {
+                int amount = ancestorToolCounts[player, toolIndex];
+                if (amount <= 0)
+                {
+                    continue;
+                }
+
+                Rect toolRect = new Rect(x + iconSize + 8f + displayedTools * 42f, y + 28f, 30f, 30f);
+                DrawToolIcon(toolRect, (Tool)toolIndex);
+                GUI.Label(new Rect(toolRect.xMax - 2f, toolRect.yMax - 12f, 18f, 16f), amount.ToString(),
+                    stockpileCountStyle);
+                displayedTools++;
+            }
+
+            return iconSize + (displayedTools > 0 ? 16f : 4f);
         }
 
         private void DrawSeasonGainsDialog()
@@ -1385,6 +1704,27 @@ namespace OldenTop
                 Rect iconRect = new Rect(x + drawnResources * (iconSize + iconGap),
                     y + headingHeight + 6f, iconSize, iconSize);
                 DrawResourceIcon(iconRect, (Resource)resourceIndex);
+                Rect countRect = new Rect(iconRect.x + iconRect.width * 0.28f,
+                    iconRect.y + iconRect.height * 0.34f,
+                    iconRect.width * 0.64f, iconRect.height * 0.58f);
+                string amountText = $"+{amount}";
+                GUI.Label(new Rect(countRect.x + 1.5f, countRect.y + 1.5f,
+                    countRect.width, countRect.height), amountText, stockpileCountShadowStyle);
+                GUI.Label(countRect, amountText, stockpileCountStyle);
+                drawnResources++;
+            }
+
+            for (int toolIndex = 0; toolIndex < ToolTypeCount; toolIndex++)
+            {
+                int amount = latestSeasonToolGains[player, toolIndex];
+                if (amount <= 0)
+                {
+                    continue;
+                }
+
+                Rect iconRect = new Rect(x + drawnResources * (iconSize + iconGap),
+                    y + headingHeight + 6f, iconSize, iconSize);
+                DrawToolIcon(iconRect, (Tool)toolIndex);
                 Rect countRect = new Rect(iconRect.x + iconRect.width * 0.28f,
                     iconRect.y + iconRect.height * 0.34f,
                     iconRect.width * 0.64f, iconRect.height * 0.58f);
@@ -1554,6 +1894,7 @@ namespace OldenTop
                             DrawPreserveTargetHighlight(marker);
                         }
                         DrawAssignedFoodOverlay(marker, player, worker);
+                        DrawWorkerToolOverlay(marker, player, worker);
                         if (foodAssignmentPhase && player == activePlayer && assignedFood[player, worker] < 0)
                         {
                             DrawUnfulfilledFlash(marker);
@@ -1569,7 +1910,7 @@ namespace OldenTop
                             }
                             else if (foodAssignmentPhase)
                             {
-                                TryAssignSelectedFoodToActiveWorker(worker, current);
+                                TryAssignSelectedProvisionToActiveWorker(worker, current);
                             }
                             else
                             {
@@ -1800,6 +2141,13 @@ namespace OldenTop
             DrawResourceIcon(ghost, (Resource)draggingFoodResource);
         }
 
+        private void DrawToolDragGhost(Vector2 mousePosition)
+        {
+            const float size = 52f;
+            Rect ghost = new Rect(mousePosition.x - size * 0.5f, mousePosition.y - size * 0.5f, size, size);
+            DrawToolIcon(ghost, (Tool)draggingTool);
+        }
+
         private void DrawWorkerIcon(Rect rect, int player, bool dimmed, string state, bool selected = false)
         {
             Color previousColor = GUI.color;
@@ -1865,6 +2213,27 @@ namespace OldenTop
             Color previousColor = GUI.color;
             GUI.color = new Color(1f, 1f, 1f, 0.96f);
             DrawResourceIcon(fuelRect, Resource.Wood);
+            GUI.color = previousColor;
+        }
+
+        private void DrawWorkerToolOverlay(Rect workerRect, int player, int worker)
+        {
+            if (player < 0 || player >= PlayerCount || worker < 0 || worker >= WorkersPerPlayer)
+            {
+                return;
+            }
+
+            int tool = workerTools[player, worker];
+            if (tool < 0 || tool >= ToolTypeCount)
+            {
+                return;
+            }
+
+            float size = workerRect.width * 0.45f;
+            Rect toolRect = new Rect(workerRect.x, workerRect.yMax - size, size, size);
+            Color previousColor = GUI.color;
+            GUI.color = new Color(1f, 1f, 1f, 0.96f);
+            DrawToolIcon(toolRect, (Tool)tool);
             GUI.color = previousColor;
         }
 
@@ -2205,7 +2574,23 @@ namespace OldenTop
             {
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
+                    if (workerAlive[player, worker] && workerActions[player, worker] == WorkerAction.Craft)
+                    {
+                        TryCraftAssignedTool(player, worker);
+                    }
+                }
+            }
+
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
                     if (!workerAlive[player, worker])
+                    {
+                        continue;
+                    }
+
+                    if (workerActions[player, worker] == WorkerAction.Craft)
                     {
                         continue;
                     }
@@ -2220,24 +2605,54 @@ namespace OldenTop
                     if (resourceIndex >= 0 && resourceIndex < ResourceTypeCount)
                     {
                         Resource resource = (Resource)resourceIndex;
+                        int amount = HasAppropriateTool(player, worker, resource) ? 2 : 1;
                         if (ResourceCatalog.IsFood(resource))
                         {
                             if (preservedWorkers[player, worker])
                             {
-                                preservedFoodStockpiles[player, resourceIndex]++;
-                                latestPreservedSeasonGains[player, resourceIndex]++;
+                                preservedFoodStockpiles[player, resourceIndex] += amount;
+                                latestPreservedSeasonGains[player, resourceIndex] += amount;
                             }
                             else
                             {
-                                freshFoodStockpiles[player, resourceIndex]++;
+                                freshFoodStockpiles[player, resourceIndex] += amount;
                             }
                         }
 
-                        resourceStockpiles[player, resourceIndex]++;
-                        latestSeasonGains[player, resourceIndex]++;
+                        resourceStockpiles[player, resourceIndex] += amount;
+                        latestSeasonGains[player, resourceIndex] += amount;
                     }
                 }
             }
+        }
+
+        private void TryCraftAssignedTool(int player, int worker)
+        {
+            int toolIndex = craftTools[player, worker];
+            if (toolIndex < 0 || toolIndex >= ToolTypeCount)
+            {
+                return;
+            }
+
+            Tool tool = (Tool)toolIndex;
+            if (!ToolCatalog.CanCraft(tool, resourceStockpiles, player))
+            {
+                return;
+            }
+
+            foreach (Resource cost in ToolCatalog.GetCosts(tool))
+            {
+                resourceStockpiles[player, (int)cost] -= ToolCatalog.GetCostAmount(tool, cost);
+            }
+
+            toolStockpiles[player, toolIndex]++;
+            latestSeasonToolGains[player, toolIndex]++;
+        }
+
+        private bool HasAppropriateTool(int player, int worker, Resource resource)
+        {
+            int tool = workerTools[player, worker];
+            return tool >= 0 && tool < ToolTypeCount && ToolCatalog.IsAppropriateFor((Tool)tool, resource);
         }
 
         private bool IsValidPreserveAssignment(int player, int preserver, int target)
@@ -2400,11 +2815,15 @@ namespace OldenTop
             return true;
         }
 
-        private void TryAssignSelectedFoodToActiveWorker(int worker, Event current)
+        private void TryAssignSelectedProvisionToActiveWorker(int worker, Event current)
         {
-            if (selectedFoodResource < 0)
+            if (selectedTool >= 0)
             {
-                SetStatusMessage("Select a food stockpile first.", isWarning: true);
+                TryAssignToolToActiveWorker(worker, (Tool)selectedTool);
+            }
+            else if (selectedFoodResource < 0)
+            {
+                SetStatusMessage("Select food or a tool stockpile first.", isWarning: true);
             }
             else if (!ResourceCatalog.IsFood((Resource)selectedFoodResource))
             {
@@ -2416,6 +2835,35 @@ namespace OldenTop
             }
 
             current.Use();
+        }
+
+        public bool TryAssignToolToActiveWorker(int worker, Tool tool)
+        {
+            int toolIndex = (int)tool;
+            if (!foodAssignmentPhase || worker < 0 || worker >= WorkersPerPlayer ||
+                !workerAlive[activePlayer, worker] || toolIndex < 0 || toolIndex >= ToolTypeCount)
+            {
+                return false;
+            }
+
+            if (workerTools[activePlayer, worker] >= 0)
+            {
+                SetStatusMessage("That worker already has a permanent tool.", isWarning: true);
+                return false;
+            }
+
+            if (toolStockpiles[activePlayer, toolIndex] <= 0)
+            {
+                SetStatusMessage($"No {tool} remains in this tool stockpile.", isWarning: true);
+                return false;
+            }
+
+            toolStockpiles[activePlayer, toolIndex]--;
+            workerTools[activePlayer, worker] = toolIndex;
+            selectedTool = toolIndex;
+            selectedFoodResource = -1;
+            SetStatusMessage($"Assigned a permanent {tool} to a worker.");
+            return true;
         }
 
         private void TryAssignSelectedWoodToActiveHearth(Event current)
@@ -2449,11 +2897,30 @@ namespace OldenTop
             }
 
             selectedFoodResource = foodIndex;
+            selectedTool = -1;
             pressedFoodResource = foodIndex;
             foodPressPosition = current.mousePosition;
             SetStatusMessage(food == Resource.Wood
                 ? "Wood selected. Click or drag it onto your hearth."
                 : $"{ResourceCatalog.GetLabel(food)} selected. Click or drag it onto a worker.");
+            current.Use();
+        }
+
+        private void BeginToolPress(Tool tool, Event current)
+        {
+            int toolIndex = (int)tool;
+            if (toolStockpiles[activePlayer, toolIndex] <= 0)
+            {
+                SetStatusMessage($"No {tool} remains in this tool stockpile.", isWarning: true);
+                current.Use();
+                return;
+            }
+
+            selectedTool = toolIndex;
+            selectedFoodResource = -1;
+            pressedTool = toolIndex;
+            toolPressPosition = current.mousePosition;
+            SetStatusMessage($"{tool} selected. Click or drag it onto a worker with no tool.");
             current.Use();
         }
 
@@ -2510,6 +2977,11 @@ namespace OldenTop
 
                 if (assignedFood[activePlayer, worker] < 0)
                 {
+                    int tool = workerTools[activePlayer, worker];
+                    if (tool >= 0 && tool < ToolTypeCount)
+                    {
+                        ancestorToolCounts[activePlayer, tool]++;
+                    }
                     workerAlive[activePlayer, worker] = false;
                     assignments[activePlayer, worker] = -1;
                     assignmentSlots[activePlayer, worker] = -1;
@@ -2606,7 +3078,8 @@ namespace OldenTop
             }
 
             selectedFoodResource = -1;
-            SetStatusMessage("Food and fuel assignments cleared. Choose a stockpile to assign again.");
+            selectedTool = -1;
+            SetStatusMessage("Food and fuel assignments cleared. Permanent tools remain with their workers.");
         }
 
         private void BeginFoodAssignments()
@@ -2691,6 +3164,7 @@ namespace OldenTop
                 assignmentSlots[activePlayer, worker] = turnStartSlots[activePlayer, worker];
                 workerPlacedThisTurn[activePlayer, worker] = false;
                 workerActions[activePlayer, worker] = WorkerAction.Gather;
+                craftTools[activePlayer, worker] = -1;
                 preserveTargetWorkers[activePlayer, worker] = -1;
             }
 
@@ -2724,6 +3198,7 @@ namespace OldenTop
                     turnStartSlots[player, worker] = assignmentSlots[player, worker];
                     workerPlacedThisTurn[player, worker] = false;
                     workerActions[player, worker] = WorkerAction.Gather;
+                    craftTools[player, worker] = -1;
                     preserveTargetWorkers[player, worker] = -1;
                 }
             }
@@ -2779,6 +3254,14 @@ namespace OldenTop
         {
             selectedFoodResource = -1;
             ClearFoodPointerState();
+            selectedTool = -1;
+            ClearToolPointerState();
+        }
+
+        private void ClearToolPointerState()
+        {
+            pressedTool = -1;
+            draggingTool = -1;
         }
 
         private void ClearWorkerInteraction()
@@ -2968,6 +3451,7 @@ namespace OldenTop
                     workerActions[player, worker] = WorkerAction.Gather;
                     preserveTargetWorkers[player, worker] = -1;
                     assignedFood[player, worker] = -1;
+                    workerTools[player, worker] = -1;
                     assignedFoodWasPreserved[player, worker] = false;
                 }
 
@@ -2989,12 +3473,14 @@ namespace OldenTop
             Array.Clear(resourceStockpiles, 0, resourceStockpiles.Length);
             Array.Clear(freshFoodStockpiles, 0, freshFoodStockpiles.Length);
             Array.Clear(preservedFoodStockpiles, 0, preservedFoodStockpiles.Length);
+            Array.Clear(toolStockpiles, 0, toolStockpiles.Length);
         }
 
         private void ClearLatestSeasonGains()
         {
             Array.Clear(latestSeasonGains, 0, latestSeasonGains.Length);
             Array.Clear(latestPreservedSeasonGains, 0, latestPreservedSeasonGains.Length);
+            Array.Clear(latestSeasonToolGains, 0, latestSeasonToolGains.Length);
         }
 
         private void EnsureStyles()
