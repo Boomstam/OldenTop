@@ -373,8 +373,8 @@ MonoBehaviour:
     m_TextWithWhitespace: "Update Available\u200B"
   m_Pos:
     serializedVersion: 2
-    x: 545
-    y: 254
+    x: 0
+    y: 26
     width: 350
     height: 450
   m_SerializedDataModeController:
@@ -414,7 +414,7 @@ MonoBehaviour:
   m_Pos:
     serializedVersion: 2
     x: 0
-    y: 489
+    y: 419
     width: 907
     height: 365
   m_SerializedDataModeController:
@@ -452,7 +452,7 @@ MonoBehaviour:
   m_Pos:
     serializedVersion: 2
     x: 0
-    y: 58
+    y: 0
     width: 1440
     height: 36
   m_SerializedDataModeController:
@@ -732,7 +732,7 @@ MonoBehaviour:
   m_Pos:
     serializedVersion: 2
     x: 0
-    y: 94
+    y: 24
     width: 907
     height: 369
   m_SerializedDataModeController:
@@ -822,8 +822,8 @@ MonoBehaviour:
     m_TextWithWhitespace: "Inspector\u200B"
   m_Pos:
     serializedVersion: 2
-    x: 1160
-    y: 94
+    x: 1161
+    y: 24
     width: 279
     height: 760
   m_SerializedDataModeController:
@@ -873,8 +873,8 @@ MonoBehaviour:
     m_TextWithWhitespace: "Project\u200B"
   m_Pos:
     serializedVersion: 2
-    x: 908
-    y: 94
+    x: 909
+    y: 24
     width: 250
     height: 760
   m_SerializedDataModeController:
@@ -923,6 +923,7 @@ MonoBehaviour:
       m_Data: 52556
     m_ExpandedIDs:
     - m_Data: 0
+    - m_Data: 52278
     - m_Data: 52280
     - m_Data: 52282
     - m_Data: 52284
@@ -961,13 +962,13 @@ MonoBehaviour:
       m_Data: 0
     m_ExpandedIDs:
     - m_Data: 0
+    - m_Data: 52278
     - m_Data: 52280
     - m_Data: 52282
     - m_Data: 52284
     - m_Data: 52286
     - m_Data: 52288
     - m_Data: 52290
-    - m_Data: 52700
     m_RenameOverlay:
       m_UserAcceptedRename: 0
       m_Name: 

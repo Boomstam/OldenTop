@@ -29,6 +29,7 @@ Candidate icons added for upcoming systems:
 - Wooden shelter: `wood-cabin.svg` → `wooden-shelter.svg` (Delapouite)
 - Fishing nets: `fishing-net.svg` → `fishing-nets.svg` (Lorc)
 - Ancestors: `tombstone.svg` → `ancestor-tombstone.svg` (Lorc)
+- God phase: `hand-of-god.svg` (Delapouite)
 
 The Unity-ready PNGs in `Assets/Resources/ResourceIcons/` retain the original glyphs.
 They are adapted with a uniform inset, a dark circular field, a warm outline, and a

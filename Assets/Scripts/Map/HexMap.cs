@@ -14,8 +14,8 @@ namespace OldenTop
 
     public sealed class HexMap : MonoBehaviour
     {
-        private const int Width = 20;
-        private const int Height = 20;
+        private const int Width = 10;
+        private const int Height = 10;
         private const int TileCount = Width * Height;
         private const float HexRadius = 0.62f;
         private const float HorizontalSpacing = 1.7320508f * HexRadius;
@@ -136,8 +136,7 @@ namespace OldenTop
                     }
                     else
                     {
-                        byte shade = insideDistance >= 0.035f ? (byte)255 : (byte)155;
-                        pixels[y * textureWidth + x] = new Color32(shade, shade, shade, 255);
+                        pixels[y * textureWidth + x] = new Color32(255, 255, 255, 255);
                     }
                 }
             }

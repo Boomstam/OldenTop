@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace OldenTop
 {
@@ -28,6 +29,34 @@ namespace OldenTop
         Basket,
         Pickaxe,
         Nets
+    }
+
+    // Effects are generated before players commit, but remain hidden until a future reveal step.
+    internal enum GodEffect
+    {
+        None,
+        GainPreservedRoots,
+        GainWood,
+        GainPreservedAurochs,
+        GainStone,
+        GainPreservedMushrooms,
+        GainSacrality
+    }
+
+    internal static class GodIconCatalog
+    {
+        private const string IconResourcePath = "GodIcons/hand-of-god";
+        private static Texture2D icon;
+
+        public static Texture2D GetIcon()
+        {
+            if (icon == null)
+            {
+                icon = Resources.Load<Texture2D>(IconResourcePath);
+            }
+
+            return icon;
+        }
     }
 
     public static class ToolCatalog
@@ -561,6 +590,10 @@ namespace OldenTop
         private const float MinimumZoomFraction = 0.35f;
         private const float MaximumZoomFraction = 1.35f;
         private const float ScrollZoomSensitivity = 0.25f;
+        private const float KeyboardPanSpeed = 8f;
+        private const float MapPanStartThreshold = 2f;
+        private const float WorkerBondThickness = 4f;
+        private const float WorkerBondOutlineThickness = 7f;
 
         private static readonly string[] SeasonNames = { "Spring", "Summer", "Autumn", "Winter" };
         private static readonly Resource[] FoodResources =
@@ -594,6 +627,7 @@ namespace OldenTop
         private readonly int[,] latestPreservedSeasonGains = new int[PlayerCount, ResourceTypeCount];
         private readonly int[,] toolStockpiles = new int[PlayerCount, ToolTypeCount];
         private readonly int[,] latestSeasonToolGains = new int[PlayerCount, ToolTypeCount];
+        private readonly int[] sacralityStockpiles = new int[PlayerCount];
         private readonly int[] ancestorCounts = new int[PlayerCount];
         private readonly int[,] ancestorToolCounts = new int[PlayerCount, ToolTypeCount];
         private readonly int[] hearthTiles = { -1, -1 };
@@ -621,8 +655,14 @@ namespace OldenTop
         private Vector2 workerPressPosition;
         private Vector2 foodPressPosition;
         private Vector2 toolPressPosition;
+        private Vector2 mapPanLastScreenPosition;
+        private bool mapPanCandidate;
+        private bool isPanningMap;
+        private bool hearthPlacementPointerPressed;
+        private bool hearthPlacementWasDragged;
         private float fittedCameraSize = 1f;
         private bool resolutionPhase;
+        private bool godPhase;
         private bool foodAssignmentPhase;
         private bool showSeasonGainsDialog;
         private bool showFoodShortageDialog;
@@ -631,6 +671,8 @@ namespace OldenTop
         private int actionMenuWorker = -1;
         private string resolvedSeasonName;
         private int resolvedYear;
+        private GodEffect hiddenGodEffect;
+        private GodEffect resolvedGodEffect;
         private string statusMessage = "Player 1: place your hearth on any non-water hex.";
         private bool statusIsWarning;
 
@@ -658,6 +700,7 @@ namespace OldenTop
         public int Year => year;
         public string Season => SeasonNames[seasonIndex];
         public bool IsResolutionPhase => resolutionPhase;
+        public bool IsGodPhase => godPhase;
         public bool IsFoodAssignmentPhase => foodAssignmentPhase;
         public bool IsActiveHearthFueled => foodAssignmentPhase && assignedHearthFuel[activePlayer];
         public bool IsPlacingHearth => !resolutionPhase && hearthTiles[activePlayer] < 0;
@@ -719,13 +762,15 @@ namespace OldenTop
             ClearLatestSeasonGains();
             Array.Clear(ancestorCounts, 0, ancestorCounts.Length);
             Array.Clear(ancestorToolCounts, 0, ancestorToolCounts.Length);
+            Array.Clear(sacralityStockpiles, 0, sacralityStockpiles.Length);
             showSeasonGainsDialog = false;
             showFoodShortageDialog = false;
+            godPhase = false;
             foodAssignmentPhase = false;
             ClearWorkerInteraction();
             map?.ClearTileHighlights();
             map?.ClearTileOccupancyOutlines();
-            SetStatusMessage("Player 1: place your hearth on any non-water hex.");
+            BeginGodPhase();
         }
 
         private void Awake()
@@ -734,6 +779,17 @@ namespace OldenTop
             {
                 map = GetComponent<HexMap>();
             }
+        }
+
+        private void Update()
+        {
+            if (mapCamera == null || godPhase || showSeasonGainsDialog || showFoodShortageDialog || showWorkerActionMenu)
+            {
+                return;
+            }
+
+            HandleKeyboardPan();
+            HandleMapDragPan();
         }
 
         private void OnGUI()
@@ -746,9 +802,10 @@ namespace OldenTop
             EnsureStyles();
             hoveredTooltip = null;
             bool previousGuiEnabled = GUI.enabled;
-            GUI.enabled = !showSeasonGainsDialog && !showFoodShortageDialog;
+            GUI.enabled = !godPhase && !showSeasonGainsDialog && !showFoodShortageDialog;
             DrawTileResourceIcons();
             DrawHearthsOnMap();
+            DrawWorkerBondsOnMap();
             DrawPlacementSlotsOnMap();
             DrawAssignmentsOnMap();
             DrawMapHeader();
@@ -759,7 +816,12 @@ namespace OldenTop
             }
             GUI.enabled = previousGuiEnabled;
 
-            if (showSeasonGainsDialog)
+            if (godPhase)
+            {
+                hoveredTooltip = null;
+                DrawGodPhaseDialog();
+            }
+            else if (showSeasonGainsDialog)
             {
                 hoveredTooltip = null;
                 DrawSeasonGainsDialog();
@@ -774,7 +836,10 @@ namespace OldenTop
                 if (!showWorkerActionMenu)
                 {
                     HandleZoomInput(Event.current);
-                    HandlePointerInteraction(Event.current);
+                    if (!isPanningMap || IsPlacingHearth)
+                    {
+                        HandlePointerInteraction(Event.current);
+                    }
                 }
 
                 if (draggingWorker >= 0)
@@ -813,7 +878,9 @@ namespace OldenTop
             GUI.Label(new Rect(x, y, contentWidth, 42f), $"Year {year}  •  {SeasonNames[seasonIndex]}", headingStyle);
             y += 48f;
 
-            string phaseText = resolutionPhase
+            string phaseText = godPhase
+                ? "GODS PHASE"
+                : resolutionPhase
                 ? "COMMITMENTS READY"
                 : foodAssignmentPhase
                     ? $"PLAYER {activePlayer + 1} FEEDS & FUELS"
@@ -821,7 +888,7 @@ namespace OldenTop
                     ? $"PLAYER {activePlayer + 1} PLACES HEARTH"
                     : $"PLAYER {activePlayer + 1} ASSIGNS";
             Color previousColor = GUI.color;
-            GUI.color = resolutionPhase ? Color.white : PlayerColors[activePlayer];
+            GUI.color = resolutionPhase || godPhase ? Color.white : PlayerColors[activePlayer];
             GUI.Label(new Rect(x, y, contentWidth, 48f), phaseText, headingStyle);
             GUI.color = previousColor;
             y += 58f;
@@ -835,6 +902,7 @@ namespace OldenTop
             for (int player = 0; player < PlayerCount; player++)
             {
                 y += DrawPlayerStockpile(x + 8f, y, contentWidth - 8f, player);
+                y += DrawSacralityStockpile(x + 8f, y, contentWidth - 8f, player);
                 y += DrawPlayerToolStockpile(x + 8f, y, contentWidth - 8f, player);
             }
 
@@ -989,10 +1057,26 @@ namespace OldenTop
 
             if (IsPlacingHearth)
             {
-                if (current.type == EventType.MouseDown && current.button == 0 &&
-                    TryGetTileAtGuiPosition(current.mousePosition, out int hearthTile))
+                if (current.type == EventType.MouseDown && current.button == 0)
                 {
-                    TryPlaceActiveHearth(hearthTile);
+                    hearthPlacementPointerPressed = TryGetTileAtGuiPosition(current.mousePosition,
+                        out _);
+                    hearthPlacementWasDragged = false;
+                    current.Use();
+                }
+                else if (current.type == EventType.MouseUp && current.button == 0 &&
+                    hearthPlacementPointerPressed)
+                {
+                    int hearthTile = -1;
+                    bool shouldPlaceHearth = !hearthPlacementWasDragged &&
+                        TryGetTileAtGuiPosition(current.mousePosition, out hearthTile);
+                    hearthPlacementPointerPressed = false;
+                    hearthPlacementWasDragged = false;
+                    if (shouldPlaceHearth)
+                    {
+                        TryPlaceActiveHearth(hearthTile);
+                    }
+
                     current.Use();
                 }
 
@@ -1306,6 +1390,24 @@ namespace OldenTop
             GUI.color = previousColor;
         }
 
+        private float DrawSacralityStockpile(float x, float y, float width, int player)
+        {
+            const float iconSize = 38f;
+            Texture2D icon = GodIconCatalog.GetIcon();
+            Rect iconRect = new Rect(x, y, iconSize, iconSize);
+            if (icon != null)
+            {
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, true);
+            }
+
+            Color previousColor = GUI.color;
+            GUI.color = PlayerColors[player];
+            GUI.Label(new Rect(x + iconSize + 8f, y, width - iconSize - 8f, iconSize),
+                $"SACRALITY: {sacralityStockpiles[player]}", smallBodyStyle);
+            GUI.color = previousColor;
+            return iconSize + 4f;
+        }
+
         private bool HasPreservedFood(int player)
         {
             for (int i = 0; i < FoodResources.Length; i++)
@@ -1439,7 +1541,7 @@ namespace OldenTop
                 }
             }
 
-            if (canPreserve && GUI.Button(new Rect(x, actionY, contentWidth, 48f), "Preserve adjacent food", buttonStyle))
+            if (canPreserve && GUI.Button(new Rect(x, actionY, contentWidth, 48f), "Preserve", buttonStyle))
             {
                 BeginPreserveTargetSelection(actionMenuWorker);
             }
@@ -1645,7 +1747,7 @@ namespace OldenTop
             GUI.color = previousColor;
 
             float width = Mathf.Min(680f, Screen.width - 40f);
-            float height = Mathf.Min(430f, Screen.height - 40f);
+            float height = Mathf.Min(800f, Screen.height - 40f);
             Rect dialog = new Rect((Screen.width - width) * 0.5f,
                 (Screen.height - height) * 0.5f, width, height);
             GUI.color = new Color32(20, 22, 20, 248);
@@ -1678,6 +1780,56 @@ namespace OldenTop
                 (current.keyCode == KeyCode.Return || current.keyCode == KeyCode.Escape))
             {
                 DismissSeasonGainsDialog();
+                current.Use();
+            }
+        }
+
+        private void DrawGodPhaseDialog()
+        {
+            Color previousColor = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.58f);
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height),
+                Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = previousColor;
+
+            float width = Mathf.Min(560f, Screen.width - 40f);
+            float height = Mathf.Min(440f, Screen.height - 40f);
+            Rect dialog = new Rect((Screen.width - width) * 0.5f,
+                (Screen.height - height) * 0.5f, width, height);
+            GUI.color = new Color32(20, 22, 20, 248);
+            GUI.DrawTexture(dialog, Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = previousColor;
+            GUI.Box(dialog, GUIContent.none, dialogStyle);
+
+            float x = dialog.x + 28f;
+            float contentWidth = dialog.width - 56f;
+            GUI.Label(new Rect(x, dialog.y + 18f, contentWidth, 44f), "GODS PHASE", dialogTitleStyle);
+
+            Texture2D icon = GodIconCatalog.GetIcon();
+            Rect iconRect = new Rect((Screen.width - 112f) * 0.5f, dialog.y + 76f, 112f, 112f);
+            if (icon != null)
+            {
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, true);
+            }
+            else
+            {
+                GUI.Label(iconRect, "✦", dialogTitleStyle);
+            }
+
+            GUI.Label(new Rect(x, dialog.y + 210f, contentWidth, 64f),
+                "The gods have set this season's fate.", bodyStyle);
+            GUI.Label(new Rect(x, dialog.y + 274f, contentWidth, 48f),
+                "Its effect remains hidden until it is revealed later.", smallBodyStyle);
+            if (GUI.Button(new Rect(x, dialog.yMax - 70f, contentWidth, 48f), "Continue", buttonStyle))
+            {
+                DismissGodPhase();
+            }
+
+            Event current = Event.current;
+            if (current.type == EventType.KeyDown &&
+                (current.keyCode == KeyCode.Return || current.keyCode == KeyCode.Escape))
+            {
+                DismissGodPhase();
                 current.Use();
             }
         }
@@ -1741,20 +1893,106 @@ namespace OldenTop
                     "Nothing gathered", bodyStyle);
             }
 
-            int preserved = 0;
-            for (int resourceIndex = 0; resourceIndex < ResourceTypeCount; resourceIndex++)
+            float resultHeight = headingHeight + iconSize + 16f;
+
+            if (HasPreservedSeasonGains(player))
             {
-                preserved += latestPreservedSeasonGains[player, resourceIndex];
+                float preservedY = y + resultHeight - 8f;
+                GUI.Label(new Rect(x, preservedY, width, headingHeight), "PRESERVED", smallBodyStyle);
+                int drawnPreservedFoods = 0;
+                for (int foodIndex = 0; foodIndex < FoodResources.Length; foodIndex++)
+                {
+                    Resource resource = FoodResources[foodIndex];
+                    int amount = latestPreservedSeasonGains[player, (int)resource];
+                    if (amount <= 0)
+                    {
+                        continue;
+                    }
+
+                    Rect iconRect = new Rect(x + drawnPreservedFoods * (iconSize + iconGap),
+                        preservedY + headingHeight, iconSize, iconSize);
+                    DrawSeasonGainResourceIcon(iconRect, resource, amount, true);
+                    drawnPreservedFoods++;
+                }
+
+                resultHeight += headingHeight + iconSize + 12f;
             }
 
-            if (preserved > 0)
+            return resultHeight + DrawGodGift(x, y + resultHeight, width, player);
+        }
+
+        private float DrawGodGift(float x, float y, float width, int player)
+        {
+            const float iconSize = 48f;
+            Texture2D icon = GodIconCatalog.GetIcon();
+            Rect iconRect = new Rect(x, y + 4f, iconSize, iconSize);
+            if (icon != null)
             {
-                GUI.Label(new Rect(x, y + headingHeight + iconSize + 2f, width, 28f),
-                    $"{preserved} food preserved", preservedStockpileCountStyle);
-                return headingHeight + iconSize + 40f;
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, true);
             }
 
-            return headingHeight + iconSize + 16f;
+            string giftLabel = GetGodGiftLabel(resolvedGodEffect);
+            GUI.Label(new Rect(x + iconSize + 10f, y, width - iconSize - 10f, 28f),
+                "GODS' GIFT", smallBodyStyle);
+            GUI.Label(new Rect(x + iconSize + 10f, y + 28f, width - iconSize - 10f, 30f),
+                giftLabel, bodyStyle);
+            return iconSize + 14f;
+        }
+
+        private static string GetGodGiftLabel(GodEffect effect)
+        {
+            switch (effect)
+            {
+                case GodEffect.GainPreservedRoots:
+                    return "+2 preserved Roots";
+                case GodEffect.GainWood:
+                    return "+2 Wood";
+                case GodEffect.GainPreservedAurochs:
+                    return "+2 preserved Aurochs";
+                case GodEffect.GainStone:
+                    return "+2 Stone";
+                case GodEffect.GainPreservedMushrooms:
+                    return "+2 preserved Mushrooms";
+                case GodEffect.GainSacrality:
+                    return "+2 Sacrality";
+                default:
+                    return "No divine gift";
+            }
+        }
+
+        private bool HasPreservedSeasonGains(int player)
+        {
+            for (int i = 0; i < FoodResources.Length; i++)
+            {
+                if (latestPreservedSeasonGains[player, (int)FoodResources[i]] > 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void DrawSeasonGainResourceIcon(Rect rect, Resource resource, int amount, bool preserved)
+        {
+            Color previousColor = GUI.color;
+            if (amount == 0)
+            {
+                GUI.color = new Color(0.42f, 0.42f, 0.42f, 0.48f);
+            }
+
+            DrawResourceIcon(rect, resource);
+            GUI.color = previousColor;
+
+            Rect countRect = new Rect(rect.x + rect.width * 0.28f,
+                rect.y + rect.height * 0.34f,
+                rect.width * 0.64f, rect.height * 0.58f);
+            string amountText = $"+{amount}";
+            GUI.Label(new Rect(countRect.x + 1.5f, countRect.y + 1.5f,
+                countRect.width, countRect.height), amountText,
+                preserved ? preservedStockpileCountShadowStyle : stockpileCountShadowStyle);
+            GUI.Label(countRect, amountText,
+                preserved ? preservedStockpileCountStyle : stockpileCountStyle);
         }
 
         private void DrawTooltip(Vector2 mousePosition)
@@ -1839,6 +2077,61 @@ namespace OldenTop
             float markerSize = MapWorkerIconSize * OccupiedTileIconScale;
             return new Rect(screen.x - markerSize * 0.5f,
                 Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
+        }
+
+        private void DrawWorkerBondsOnMap()
+        {
+            if (mapCamera == null)
+            {
+                return;
+            }
+
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
+                    int target = preserveTargetWorkers[player, worker];
+                    if (workerActions[player, worker] != WorkerAction.Preserve ||
+                        !IsValidPreserveAssignment(player, worker, target))
+                    {
+                        continue;
+                    }
+
+                    Vector3 sourceScreen = GetWorkerSlotScreenPosition(assignments[player, worker],
+                        assignmentSlots[player, worker]);
+                    Vector3 targetScreen = GetWorkerSlotScreenPosition(assignments[player, target],
+                        assignmentSlots[player, target]);
+                    if (sourceScreen.z < 0f || targetScreen.z < 0f)
+                    {
+                        continue;
+                    }
+
+                    DrawWorkerBond(new Vector2(sourceScreen.x, Screen.height - sourceScreen.y),
+                        new Vector2(targetScreen.x, Screen.height - targetScreen.y), PlayerColors[player]);
+                }
+            }
+        }
+
+        private static void DrawWorkerBond(Vector2 source, Vector2 target, Color color)
+        {
+            Vector2 direction = target - source;
+            float length = direction.magnitude;
+            if (length <= 0.001f)
+            {
+                return;
+            }
+
+            Color previousColor = GUI.color;
+            Matrix4x4 previousMatrix = GUI.matrix;
+            GUIUtility.RotateAroundPivot(Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg, source);
+            GUI.color = new Color(color.r, color.g, color.b, 0.95f);
+            GUI.DrawTexture(new Rect(source.x, source.y - WorkerBondOutlineThickness * 0.5f,
+                length, WorkerBondOutlineThickness), Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = new Color(color.r, color.g, color.b, 0.95f);
+            GUI.DrawTexture(new Rect(source.x, source.y - WorkerBondThickness * 0.5f,
+                length, WorkerBondThickness), Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.matrix = previousMatrix;
+            GUI.color = previousColor;
         }
 
         private void DrawAssignmentsOnMap()
@@ -2113,6 +2406,102 @@ namespace OldenTop
 
             AdjustZoom(-current.delta.y * ScrollZoomSensitivity);
             current.Use();
+        }
+
+        private void HandleKeyboardPan()
+        {
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard == null)
+            {
+                return;
+            }
+
+            Vector2 direction = Vector2.zero;
+            if (keyboard.leftArrowKey.isPressed || keyboard.qKey.isPressed)
+            {
+                direction.x -= 1f;
+            }
+
+            if (keyboard.rightArrowKey.isPressed || keyboard.dKey.isPressed)
+            {
+                direction.x += 1f;
+            }
+
+            if (keyboard.upArrowKey.isPressed || keyboard.zKey.isPressed)
+            {
+                direction.y += 1f;
+            }
+
+            if (keyboard.downArrowKey.isPressed || keyboard.sKey.isPressed)
+            {
+                direction.y -= 1f;
+            }
+
+            if (direction.sqrMagnitude > 0f)
+            {
+                mapCamera.transform.position += (Vector3)(direction.normalized * KeyboardPanSpeed * Time.deltaTime);
+            }
+        }
+
+        private void HandleMapDragPan()
+        {
+            Mouse mouse = Mouse.current;
+            if (mouse == null)
+            {
+                return;
+            }
+
+            Vector2 pointerPosition = mouse.position.ReadValue();
+            if (mouse.leftButton.wasPressedThisFrame)
+            {
+                mapPanCandidate = mapCamera.pixelRect.Contains(pointerPosition);
+                isPanningMap = false;
+                mapPanLastScreenPosition = pointerPosition;
+                return;
+            }
+
+            if (mouse.leftButton.wasReleasedThisFrame)
+            {
+                mapPanCandidate = false;
+                isPanningMap = false;
+                return;
+            }
+
+            if (!mouse.leftButton.isPressed || !mapPanCandidate)
+            {
+                return;
+            }
+
+            if (pressedWorker >= 0 || draggingWorker >= 0 || pressedFoodResource >= 0 ||
+                draggingFoodResource >= 0 || pressedTool >= 0 || draggingTool >= 0)
+            {
+                mapPanCandidate = false;
+                return;
+            }
+
+            Vector2 screenDelta = pointerPosition - mapPanLastScreenPosition;
+            if (!isPanningMap && screenDelta.sqrMagnitude < MapPanStartThreshold * MapPanStartThreshold)
+            {
+                return;
+            }
+
+            isPanningMap = true;
+            if (IsPlacingHearth && hearthPlacementPointerPressed)
+            {
+                hearthPlacementWasDragged = true;
+            }
+
+            PanMapByScreenDelta(mapPanLastScreenPosition, pointerPosition);
+            mapPanLastScreenPosition = pointerPosition;
+        }
+
+        private void PanMapByScreenDelta(Vector2 previousScreenPosition, Vector2 currentScreenPosition)
+        {
+            Vector3 previousWorldPosition = mapCamera.ScreenToWorldPoint(
+                new Vector3(previousScreenPosition.x, previousScreenPosition.y, 0f));
+            Vector3 currentWorldPosition = mapCamera.ScreenToWorldPoint(
+                new Vector3(currentScreenPosition.x, currentScreenPosition.y, 0f));
+            mapCamera.transform.position += previousWorldPosition - currentWorldPosition;
         }
 
         public void AdjustZoom(float steps)
@@ -2537,15 +2926,101 @@ namespace OldenTop
             BeginFoodAssignments();
         }
 
+        private void BeginGodPhase()
+        {
+            activePlayer = 0;
+            ClearWorkerInteraction();
+            hiddenGodEffect = GenerateHiddenGodEffect();
+            godPhase = true;
+            SetStatusMessage("The gods have set this season's hidden fate.");
+        }
+
+        private GodEffect GenerateHiddenGodEffect()
+        {
+            // The prototype's opening year contains only beneficial effects. Later-year
+            // generation belongs here once harmful and more varied effects are introduced.
+            if (year != 1)
+            {
+                return GodEffect.None;
+            }
+
+            switch (seasonIndex)
+            {
+                case 0:
+                    return UnityEngine.Random.value < 0.5f
+                        ? GodEffect.GainPreservedRoots
+                        : GodEffect.GainWood;
+                case 1:
+                    return UnityEngine.Random.value < 0.5f
+                        ? GodEffect.GainPreservedAurochs
+                        : GodEffect.GainStone;
+                case 2:
+                    return UnityEngine.Random.value < 0.5f
+                        ? GodEffect.GainPreservedMushrooms
+                        : GodEffect.GainWood;
+                case 3:
+                    return GodEffect.GainSacrality;
+                default:
+                    return GodEffect.None;
+            }
+        }
+
+        private void DismissGodPhase()
+        {
+            if (!godPhase)
+            {
+                return;
+            }
+
+            godPhase = false;
+            BeginActivePlayerAssignments();
+        }
+
         private void ResolveSeasonAndBeginFoodAssignments()
         {
             resolvedSeasonName = SeasonNames[seasonIndex];
             resolvedYear = year;
+            resolvedGodEffect = hiddenGodEffect;
+            ApplyGodGift();
             CollectAssignedResources();
             activePlayer = 0;
             resolutionPhase = false;
             BeginFoodAssignments();
             showSeasonGainsDialog = true;
+        }
+
+        private void ApplyGodGift()
+        {
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                switch (resolvedGodEffect)
+                {
+                    case GodEffect.GainPreservedRoots:
+                        AddPreservedGodFood(player, Resource.Roots);
+                        break;
+                    case GodEffect.GainWood:
+                        resourceStockpiles[player, (int)Resource.Wood] += 2;
+                        break;
+                    case GodEffect.GainPreservedAurochs:
+                        AddPreservedGodFood(player, Resource.Aurochs);
+                        break;
+                    case GodEffect.GainStone:
+                        resourceStockpiles[player, (int)Resource.Stone] += 2;
+                        break;
+                    case GodEffect.GainPreservedMushrooms:
+                        AddPreservedGodFood(player, Resource.Mushrooms);
+                        break;
+                    case GodEffect.GainSacrality:
+                        sacralityStockpiles[player] += 2;
+                        break;
+                }
+            }
+        }
+
+        private void AddPreservedGodFood(int player, Resource resource)
+        {
+            resourceStockpiles[player, (int)resource] += 2;
+            preservedFoodStockpiles[player, (int)resource] += 2;
         }
 
         private void CollectAssignedResources()
@@ -2696,6 +3171,11 @@ namespace OldenTop
                    resourceIndex >= 0 && resourceIndex < ResourceTypeCount
                 ? preservedFoodStockpiles[player, resourceIndex]
                 : 0;
+        }
+
+        public int GetSacralityAmount(int player)
+        {
+            return player >= 0 && player < PlayerCount ? sacralityStockpiles[player] : 0;
         }
 
         public bool IsSeasonGainsDialogVisible => showSeasonGainsDialog;
@@ -3017,7 +3497,7 @@ namespace OldenTop
             }
 
             PrepareSeasonWorkerMoves();
-            BeginActivePlayerAssignments();
+            BeginGodPhase();
         }
 
         private bool ExtinguishUnfueledActiveHearth()
@@ -3566,7 +4046,7 @@ namespace OldenTop
             preservedStockpileCountStyle = new GUIStyle(stockpileCountStyle)
             {
                 alignment = TextAnchor.LowerLeft,
-                normal = { textColor = new Color32(235, 75, 75, 255) }
+                normal = { textColor = Color.white }
             };
             preservedStockpileCountShadowStyle = new GUIStyle(preservedStockpileCountStyle)
             {
