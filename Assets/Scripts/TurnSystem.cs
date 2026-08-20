@@ -617,11 +617,16 @@ namespace OldenTop
         private const float MapPanStartThreshold = 2f;
         private const float WorkerBondThickness = 4f;
         private const float WorkerBondOutlineThickness = 7f;
+        private const string DeveloperConsoleControlName = "DeveloperConsoleInput";
 
         private static readonly string[] SeasonNames = { "Spring", "Summer", "Autumn", "Winter" };
         private static readonly Resource[] FoodResources =
         {
             Resource.Aurochs, Resource.Roots, Resource.Mushrooms, Resource.Fish
+        };
+        private static readonly Resource[] StockpileResources =
+        {
+            Resource.Wood, Resource.Stone, Resource.Shells
         };
         private static readonly Color[] PlayerColors =
         {
@@ -696,6 +701,9 @@ namespace OldenTop
         private bool showFoodShortageDialog;
         private bool showWorkerActionMenu;
         private bool selectingPreserveTarget;
+        private bool showDeveloperConsole;
+        private bool focusDeveloperConsole;
+        private Vector2 inventoryScrollPosition;
         private int actionMenuWorker = -1;
         private string resolvedSeasonName;
         private int resolvedYear;
@@ -704,6 +712,8 @@ namespace OldenTop
         private bool godEffectRevealed;
         private string statusMessage = "Player 1: place your hearth on any non-water hex.";
         private bool statusIsWarning;
+        private string developerConsoleInput = string.Empty;
+        private string developerConsoleMessage = "Enter: <resource> <amount>";
 
         private GUIStyle panelStyle;
         private GUIStyle titleStyle;
@@ -721,6 +731,8 @@ namespace OldenTop
         private GUIStyle dialogTitleStyle;
         private GUIStyle dialogStyle;
         private GUIStyle tooltipStyle;
+        private GUIStyle developerConsoleInputStyle;
+        private GUIStyle developerConsoleMessageStyle;
         private Texture2D iconOutlineTexture;
         private Texture2D ancestorBackdropTexture;
         private string hoveredTooltip;
@@ -786,7 +798,8 @@ namespace OldenTop
 
         private void Update()
         {
-            if (mapCamera == null || godPhase || showSeasonGainsDialog || showFoodShortageDialog || showWorkerActionMenu)
+            if (mapCamera == null || godPhase || showSeasonGainsDialog || showFoodShortageDialog || showWorkerActionMenu ||
+                showDeveloperConsole)
             {
                 return;
             }
@@ -804,8 +817,10 @@ namespace OldenTop
 
             EnsureStyles();
             hoveredTooltip = null;
+            HandleDeveloperConsoleToggle(Event.current);
             bool previousGuiEnabled = GUI.enabled;
-            GUI.enabled = !godPhase && !showSeasonGainsDialog && !showFoodShortageDialog;
+            bool consoleIsOpen = showDeveloperConsole;
+            GUI.enabled = !consoleIsOpen && !godPhase && !showSeasonGainsDialog && !showFoodShortageDialog;
             DrawTileResourceIcons();
             DrawHearthsOnMap();
             DrawMonumentsOnMap();
@@ -835,7 +850,7 @@ namespace OldenTop
                 hoveredTooltip = null;
                 DrawFoodShortageDialog();
             }
-            else
+            else if (!consoleIsOpen)
             {
                 if (!showWorkerActionMenu)
                 {
@@ -861,6 +876,144 @@ namespace OldenTop
 
                 DrawTooltip(Event.current.mousePosition);
             }
+
+            if (consoleIsOpen)
+            {
+                GUI.enabled = true;
+                DrawDeveloperConsole();
+                GUI.enabled = previousGuiEnabled;
+            }
+        }
+
+        private void HandleDeveloperConsoleToggle(Event current)
+        {
+            if (current.type != EventType.KeyDown || current.character != '#')
+            {
+                return;
+            }
+
+            if (showDeveloperConsole)
+            {
+                showDeveloperConsole = false;
+                current.Use();
+                return;
+            }
+
+            showDeveloperConsole = true;
+            focusDeveloperConsole = true;
+            developerConsoleInput = string.Empty;
+            developerConsoleMessage = "Enter: <resource> <amount>";
+            current.Use();
+        }
+
+        private void DrawDeveloperConsole()
+        {
+            const float width = 430f;
+            const float height = 88f;
+            Rect panel = new Rect(Screen.width - width - 20f, Screen.height - height - 20f, width, height);
+            Color previousColor = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.88f);
+            GUI.DrawTexture(panel, Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = previousColor;
+            GUI.Box(panel, GUIContent.none, dialogStyle);
+
+            Event current = Event.current;
+            if (current.type == EventType.KeyDown)
+            {
+                if (current.keyCode == KeyCode.Escape)
+                {
+                    showDeveloperConsole = false;
+                    current.Use();
+                    return;
+                }
+
+                if (current.keyCode == KeyCode.Return || current.keyCode == KeyCode.KeypadEnter)
+                {
+                    if (ExecuteDeveloperConsoleCommand(developerConsoleInput))
+                    {
+                        showDeveloperConsole = false;
+                    }
+
+                    current.Use();
+                    return;
+                }
+            }
+
+            Rect inputRect = new Rect(panel.x + 12f, panel.y + 10f, panel.width - 24f, 34f);
+            GUI.SetNextControlName(DeveloperConsoleControlName);
+            developerConsoleInput = GUI.TextField(inputRect, developerConsoleInput, developerConsoleInputStyle);
+
+            if (focusDeveloperConsole && Event.current.type == EventType.Repaint)
+            {
+                GUI.FocusControl(DeveloperConsoleControlName);
+                focusDeveloperConsole = false;
+            }
+
+            GUI.Label(new Rect(panel.x + 12f, panel.y + 48f, panel.width - 24f, 28f),
+                developerConsoleMessage, developerConsoleMessageStyle);
+        }
+
+        private bool ExecuteDeveloperConsoleCommand(string command)
+        {
+            string[] parts = command.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2 || !int.TryParse(parts[parts.Length - 1], out int amount) || amount <= 0)
+            {
+                developerConsoleMessage = "Use: <resource> <positive amount>";
+                return false;
+            }
+
+            string resourceName = string.Join(" ", parts, 0, parts.Length - 1);
+            bool preserved = resourceName.StartsWith("preserved ", StringComparison.OrdinalIgnoreCase);
+            if (preserved)
+            {
+                resourceName = resourceName.Substring("preserved ".Length).Trim();
+            }
+
+            if (string.Equals(resourceName, "sacrality", StringComparison.OrdinalIgnoreCase))
+            {
+                if (preserved)
+                {
+                    developerConsoleMessage = "Sacrality cannot be preserved.";
+                    return false;
+                }
+
+                AddSacrality(activePlayer, amount);
+                developerConsoleMessage = $"Granted {amount} Sacrality to Player {activePlayer + 1}.";
+            }
+            else if (Enum.TryParse(resourceName, true, out Resource resource))
+            {
+                int resourceIndex = (int)resource;
+                if (preserved && !ResourceCatalog.IsFood(resource))
+                {
+                    developerConsoleMessage = $"{ResourceCatalog.GetLabel(resource)} cannot be preserved.";
+                    return false;
+                }
+
+                resourceStockpiles[activePlayer, resourceIndex] += amount;
+                if (ResourceCatalog.IsFood(resource))
+                {
+                    if (preserved)
+                    {
+                        preservedFoodStockpiles[activePlayer, resourceIndex] += amount;
+                    }
+                    else
+                    {
+                        freshFoodStockpiles[activePlayer, resourceIndex] += amount;
+                    }
+                }
+
+                string preservationLabel = preserved ? "preserved " : string.Empty;
+                developerConsoleMessage = $"Granted {amount} {preservationLabel}{ResourceCatalog.GetLabel(resource)} to Player {activePlayer + 1}.";
+            }
+            else
+            {
+                developerConsoleMessage = $"Unknown resource: {resourceName}.";
+                return false;
+            }
+
+            developerConsoleInput = string.Empty;
+            focusDeveloperConsole = true;
+            return true;
         }
 
         private void DrawInventoryPanel()
@@ -872,6 +1025,14 @@ namespace OldenTop
             GUI.DrawTexture(panel, Texture2D.whiteTexture, ScaleMode.StretchToFill);
             GUI.color = previousGuiColor;
             GUI.Box(panel, GUIContent.none, panelStyle);
+
+            float footerHeight = GetInventoryFooterHeight();
+            Rect contentViewport = new Rect(0f, 0f, width, Screen.height - footerHeight);
+            // Leave room for the vertical scrollbar so it does not create horizontal overflow.
+            Rect contentRect = new Rect(0f, 0f, width - 22f,
+                Mathf.Max(contentViewport.height, GetInventoryContentHeight()));
+            inventoryScrollPosition = GUI.BeginScrollView(contentViewport, inventoryScrollPosition, contentRect,
+                false, true);
 
             float x = 18f;
             float contentWidth = width - 36f;
@@ -950,56 +1111,78 @@ namespace OldenTop
                 }
 
                 y += InventoryWorkerIconSize * 2f + 16f;
-
-                if (foodAssignmentPhase)
-                {
-                    if (GUI.Button(new Rect(x, Screen.height - 128f, contentWidth, 52f),
-                            "Clear food and fuel", buttonStyle))
-                    {
-                        ClearActivePlayerResourceAssignments();
-                    }
-
-                    GUI.backgroundColor = PlayerColors[activePlayer];
-                    if (GUI.Button(new Rect(x, Screen.height - 68f, contentWidth, 52f),
-                            "Finish food and fuel", buttonStyle))
-                    {
-                        TryEndFoodAssignments();
-                    }
-                }
-                else
-                {
-                    bool canThrowFeast = CanThrowFeast(activePlayer);
-                    GUI.enabled = canThrowFeast;
-                    if (GUI.Button(new Rect(x, Screen.height - 188f, contentWidth, 52f),
-                            feastThrownThisTurn[activePlayer]
-                                ? "Feast already held this season"
-                                : "Throw feast  •  1 Stone • 1 Wood • 1 Aurochs • 1 Mushroom", buttonStyle))
-                    {
-                        ThrowFeast(activePlayer);
-                    }
-                    GUI.enabled = true;
-
-                    string recallLabel = CanRecallActiveHearth
-                        ? "Recall workers and hearth"
-                        : "Reset this player's worker moves";
-                    if (GUI.Button(new Rect(x, Screen.height - 128f, contentWidth, 52f), recallLabel, buttonStyle))
-                    {
-                        RecallActivePlayerPieces();
-                    }
-
-                    GUI.backgroundColor = PlayerColors[activePlayer];
-                    if (GUI.Button(new Rect(x, Screen.height - 68f, contentWidth, 52f), "End assignments", buttonStyle))
-                    {
-                        EndAssignments();
-                    }
-                }
-
-                GUI.backgroundColor = Color.white;
             }
             else
             {
                 GUI.Label(new Rect(x, y, contentWidth, 110f),
                     "Both players have committed. Workers remain on the map until the next season begins.", bodyStyle);
+            }
+
+            GUI.EndScrollView();
+            DrawInventoryFooter(x, contentWidth, footerHeight);
+        }
+
+        private float GetInventoryContentHeight()
+        {
+            const float playerStockpileHeight = 290f;
+            const float sacralityHeight = 42f;
+            const float toolStockpileHeight = 94f;
+
+            // Title, season, god effects, phase, status, and the stockpile heading.
+            float height = 422f;
+            height += PlayerCount * (playerStockpileHeight + sacralityHeight + toolStockpileHeight);
+            height += 14f + 32f + 36f;
+
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                bool hasAncestorTools = false;
+                for (int tool = 0; tool < ToolTypeCount; tool++)
+                {
+                    if (ancestorToolCounts[player, tool] > 0)
+                    {
+                        hasAncestorTools = true;
+                        break;
+                    }
+                }
+
+                height += 46f + (hasAncestorTools ? 16f : 4f);
+            }
+
+            height += 8f + 42f + 48f;
+            height += IsPlacingHearth ? 140f : resolutionPhase ? 110f : InventoryWorkerIconSize * 2f + 16f;
+            return height + 18f;
+        }
+
+        private float GetInventoryFooterHeight()
+        {
+            if (IsPlacingHearth)
+            {
+                return 0f;
+            }
+
+            if (resolutionPhase)
+            {
+                return 72f;
+            }
+
+            return foodAssignmentPhase ? 128f : 188f;
+        }
+
+        private void DrawInventoryFooter(float x, float contentWidth, float footerHeight)
+        {
+            if (footerHeight <= 0f)
+            {
+                return;
+            }
+
+            Rect footer = new Rect(0f, Screen.height - footerHeight, Screen.width * PanelFraction, footerHeight);
+            Color previousColor = GUI.color;
+            GUI.color = new Color32(12, 13, 12, 255);
+            GUI.DrawTexture(footer, Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = previousColor;
+
+            if (resolutionPhase)
+            {
                 string nextSeason = SeasonNames[(seasonIndex + 1) % SeasonNames.Length];
                 GUI.backgroundColor = new Color32(139, 187, 114, 255);
                 if (GUI.Button(new Rect(x, Screen.height - 72f, contentWidth, 56f), $"Begin {nextSeason}", buttonStyle))
@@ -1008,7 +1191,53 @@ namespace OldenTop
                 }
 
                 GUI.backgroundColor = Color.white;
+                return;
             }
+
+            if (foodAssignmentPhase)
+            {
+                if (GUI.Button(new Rect(x, Screen.height - 128f, contentWidth, 52f),
+                        "Clear food and fuel", buttonStyle))
+                {
+                    ClearActivePlayerResourceAssignments();
+                }
+
+                GUI.backgroundColor = PlayerColors[activePlayer];
+                if (GUI.Button(new Rect(x, Screen.height - 68f, contentWidth, 52f),
+                        "Finish food and fuel", buttonStyle))
+                {
+                    TryEndFoodAssignments();
+                }
+            }
+            else
+            {
+                bool canThrowFeast = CanThrowFeast(activePlayer);
+                GUI.enabled = canThrowFeast;
+                if (GUI.Button(new Rect(x, Screen.height - 188f, contentWidth, 52f),
+                        feastThrownThisTurn[activePlayer]
+                            ? "Feast already held this season"
+                            : "Throw feast  •  1 Stone • 1 Wood • 1 Aurochs • 1 Mushroom", buttonStyle))
+                {
+                    ThrowFeast(activePlayer);
+                }
+                GUI.enabled = true;
+
+                string recallLabel = CanRecallActiveHearth
+                    ? "Recall workers and hearth"
+                    : "Reset this player's worker moves";
+                if (GUI.Button(new Rect(x, Screen.height - 128f, contentWidth, 52f), recallLabel, buttonStyle))
+                {
+                    RecallActivePlayerPieces();
+                }
+
+                GUI.backgroundColor = PlayerColors[activePlayer];
+                if (GUI.Button(new Rect(x, Screen.height - 68f, contentWidth, 52f), "End assignments", buttonStyle))
+                {
+                    EndAssignments();
+                }
+            }
+
+            GUI.backgroundColor = Color.white;
         }
 
         private void DrawWorkerCard(Rect rect, int worker)
@@ -1337,38 +1566,42 @@ namespace OldenTop
             GUI.Label(new Rect(x, y, width, headingHeight), $"PLAYER {player + 1}", smallBodyStyle);
             GUI.color = previousColor;
 
-            for (int resourceIndex = 0; resourceIndex < ResourceTypeCount; resourceIndex++)
+            float resourcesY = y + headingHeight + StockpilePlayerLabelGap;
+            for (int resourceIndex = 0; resourceIndex < StockpileResources.Length; resourceIndex++)
             {
-                int column = resourceIndex % 4;
-                int row = resourceIndex / 4;
+                Resource resource = StockpileResources[resourceIndex];
                 Rect iconRect = new Rect(
-                    x + column * (StockpileResourceIconSize + horizontalGap),
-                    y + headingHeight + StockpilePlayerLabelGap +
-                    row * (StockpileResourceIconSize + verticalGap),
+                    x + resourceIndex * (StockpileResourceIconSize + horizontalGap),
+                    resourcesY,
                     StockpileResourceIconSize,
                     StockpileResourceIconSize);
-                DrawStockpileResourceIcon(iconRect, (Resource)resourceIndex,
-                    resourceStockpiles[player, resourceIndex], player, false);
+                DrawStockpileResourceIcon(iconRect, resource,
+                    resourceStockpiles[player, (int)resource], player, false);
             }
 
-            float height = headingHeight + StockpilePlayerLabelGap +
-                           (StockpileResourceIconSize + verticalGap) * 2f + 8f;
-            if (!HasPreservedFood(player))
-            {
-                return height;
-            }
-
-            GUI.Label(new Rect(x, y + height, width, headingHeight), "PRESERVED", smallBodyStyle);
+            float freshY = resourcesY + StockpileResourceIconSize + verticalGap;
+            GUI.Label(new Rect(x, freshY, width, headingHeight), "FRESH", smallBodyStyle);
             for (int foodColumn = 0; foodColumn < 4; foodColumn++)
             {
                 Resource resource = FoodResources[foodColumn];
                 Rect iconRect = new Rect(x + foodColumn * (StockpileResourceIconSize + horizontalGap),
-                    y + height + headingHeight, StockpileResourceIconSize, StockpileResourceIconSize);
+                    freshY + headingHeight, StockpileResourceIconSize, StockpileResourceIconSize);
                 DrawStockpileResourceIcon(iconRect, resource,
-                    preservedFoodStockpiles[player, (int)resource], player, true);
+                    freshFoodStockpiles[player, (int)resource], player, false);
             }
 
-            return height + headingHeight + StockpileResourceIconSize + 12f;
+            float preservedY = freshY + headingHeight + StockpileResourceIconSize + verticalGap;
+            GUI.Label(new Rect(x, preservedY, width, headingHeight), "PRESERVED", smallBodyStyle);
+            for (int foodColumn = 0; foodColumn < 4; foodColumn++)
+            {
+                Resource resource = FoodResources[foodColumn];
+                Rect iconRect = new Rect(x + foodColumn * (StockpileResourceIconSize + horizontalGap),
+                    preservedY + headingHeight, StockpileResourceIconSize, StockpileResourceIconSize);
+                DrawStockpileResourceIcon(iconRect, resource,
+                    preservedFoodStockpiles[player, (int)resource], player, false);
+            }
+
+            return preservedY + headingHeight + StockpileResourceIconSize + 12f - y;
         }
 
         private void DrawStockpileResourceIcon(Rect rect, Resource resource, int amount, int player, bool preserved)
@@ -1423,19 +1656,6 @@ namespace OldenTop
                 $"SACRALITY: {sacralityStockpiles[player]}  •  Monuments: {GetMonumentCount(player)}", smallBodyStyle);
             GUI.color = previousColor;
             return iconSize + 4f;
-        }
-
-        private bool HasPreservedFood(int player)
-        {
-            for (int i = 0; i < FoodResources.Length; i++)
-            {
-                if (preservedFoodStockpiles[player, (int)FoodResources[i]] > 0)
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         private float DrawPlayerToolStockpile(float x, float y, float width, int player)
@@ -4641,6 +4861,18 @@ namespace OldenTop
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
                 normal = { textColor = new Color32(238, 231, 210, 255) }
+            };
+            developerConsoleInputStyle = new GUIStyle(GUI.skin.textField)
+            {
+                fontSize = 20,
+                alignment = TextAnchor.MiddleLeft,
+                normal = { textColor = new Color32(238, 231, 210, 255) }
+            };
+            developerConsoleMessageStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 16,
+                alignment = TextAnchor.MiddleLeft,
+                normal = { textColor = new Color32(210, 207, 196, 255) }
             };
         }
 
