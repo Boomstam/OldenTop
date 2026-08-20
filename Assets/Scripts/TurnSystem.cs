@@ -713,7 +713,7 @@ namespace OldenTop
         private string statusMessage = "Player 1: place your hearth on any non-water hex.";
         private bool statusIsWarning;
         private string developerConsoleInput = string.Empty;
-        private string developerConsoleMessage = "Enter: <resource> <amount>";
+        private string developerConsoleMessage = "Enter: <resource|all> <amount>";
 
         private GUIStyle panelStyle;
         private GUIStyle titleStyle;
@@ -902,7 +902,7 @@ namespace OldenTop
             showDeveloperConsole = true;
             focusDeveloperConsole = true;
             developerConsoleInput = string.Empty;
-            developerConsoleMessage = "Enter: <resource> <amount>";
+            developerConsoleMessage = "Enter: <resource|all> <amount>";
             current.Use();
         }
 
@@ -958,7 +958,7 @@ namespace OldenTop
             string[] parts = command.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length < 2 || !int.TryParse(parts[parts.Length - 1], out int amount) || amount <= 0)
             {
-                developerConsoleMessage = "Use: <resource> <positive amount>";
+                developerConsoleMessage = "Use: <resource|all> <positive amount>";
                 return false;
             }
 
@@ -969,7 +969,18 @@ namespace OldenTop
                 resourceName = resourceName.Substring("preserved ".Length).Trim();
             }
 
-            if (string.Equals(resourceName, "sacrality", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(resourceName, "all", StringComparison.OrdinalIgnoreCase))
+            {
+                if (preserved)
+                {
+                    developerConsoleMessage = "Use all <amount>, not preserved all <amount>.";
+                    return false;
+                }
+
+                GrantAllResources(activePlayer, amount);
+                developerConsoleMessage = $"Granted {amount} of all resources to Player {activePlayer + 1}.";
+            }
+            else if (string.Equals(resourceName, "sacrality", StringComparison.OrdinalIgnoreCase))
             {
                 if (preserved)
                 {
@@ -1016,6 +1027,24 @@ namespace OldenTop
             return true;
         }
 
+        private void GrantAllResources(int player, int amount)
+        {
+            foreach (Resource resource in Enum.GetValues(typeof(Resource)))
+            {
+                int resourceIndex = (int)resource;
+                resourceStockpiles[player, resourceIndex] += amount;
+
+                if (ResourceCatalog.IsFood(resource))
+                {
+                    freshFoodStockpiles[player, resourceIndex] += amount;
+                    preservedFoodStockpiles[player, resourceIndex] += amount;
+                    resourceStockpiles[player, resourceIndex] += amount;
+                }
+            }
+
+            AddSacrality(player, amount);
+        }
+
         private void DrawInventoryPanel()
         {
             float width = Screen.width * PanelFraction;
@@ -1050,12 +1079,14 @@ namespace OldenTop
                 : resolutionPhase
                 ? "COMMITMENTS READY"
                 : foodAssignmentPhase
-                    ? $"PLAYER {activePlayer + 1} FEEDS & FUELS"
+                    ? feastMovementOnlyThisSeason[activePlayer]
+                        ? $"PLAYER {activePlayer + 1} FEAST SEASON — FEEDS & FUELS"
+                        : $"PLAYER {activePlayer + 1} FEEDS & FUELS"
                 : IsPlacingHearth
                     ? $"PLAYER {activePlayer + 1} PLACES HEARTH"
                     : feastMovementOnlyThisSeason[activePlayer]
-                        ? $"PLAYER {activePlayer + 1} MOVES ONLY"
-                    : $"PLAYER {activePlayer + 1} ASSIGNS";
+                        ? $"PLAYER {activePlayer + 1} FEAST SEASON — MOVES ONLY"
+                        : $"PLAYER {activePlayer + 1} ASSIGNS";
             Color previousColor = GUI.color;
             GUI.color = resolutionPhase || godPhase ? Color.white : PlayerColors[activePlayer];
             GUI.Label(new Rect(x, y, contentWidth, 48f), phaseText, headingStyle);
@@ -1065,6 +1096,11 @@ namespace OldenTop
             GUI.Label(new Rect(x, y, contentWidth, 86f), statusMessage,
                 statusIsWarning ? warningBodyStyle : bodyStyle);
             y += 94f;
+
+            if (!godPhase && !resolutionPhase && feastMovementOnlyThisSeason[activePlayer])
+            {
+                y += DrawFeastSeasonNotice(x, y, contentWidth);
+            }
 
             GUI.Label(new Rect(x, y, contentWidth, 42f), "STOCKPILES", headingStyle);
             y += 46f;
@@ -1130,6 +1166,10 @@ namespace OldenTop
 
             // Title, season, god effects, phase, status, and the stockpile heading.
             float height = 422f;
+            if (!godPhase && !resolutionPhase && feastMovementOnlyThisSeason[activePlayer])
+            {
+                height += 66f;
+            }
             height += PlayerCount * (playerStockpileHeight + sacralityHeight + toolStockpileHeight);
             height += 14f + 32f + 36f;
 
@@ -1165,7 +1205,24 @@ namespace OldenTop
                 return 72f;
             }
 
-            return foodAssignmentPhase ? 128f : 188f;
+            return foodAssignmentPhase ? 188f : 128f;
+        }
+
+        private float DrawFeastSeasonNotice(float x, float y, float width)
+        {
+            const float height = 58f;
+            Rect notice = new Rect(x, y, width, height);
+            Color previousColor = GUI.color;
+            GUI.color = new Color32(91, 65, 38, 255);
+            GUI.DrawTexture(notice, Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = previousColor;
+            GUI.Box(notice, GUIContent.none, panelStyle);
+            GUI.Label(new Rect(x + 10f, y + 5f, width - 20f, 22f), "FEAST SEASON", smallBodyStyle);
+            GUI.Label(new Rect(x + 10f, y + 26f, width - 20f, 28f),
+                foodAssignmentPhase
+                    ? "Workers may still be fed and the hearth fueled."
+                    : "Workers may move, but cannot perform actions.", bodyStyle);
+            return height + 8f;
         }
 
         private void DrawInventoryFooter(float x, float contentWidth, float footerHeight)
@@ -1196,6 +1253,17 @@ namespace OldenTop
 
             if (foodAssignmentPhase)
             {
+                bool canThrowFeast = CanThrowFeast(activePlayer);
+                GUI.enabled = canThrowFeast;
+                if (GUI.Button(new Rect(x, Screen.height - 188f, contentWidth, 52f),
+                        feastThrownThisTurn[activePlayer]
+                            ? "Feast already held this season"
+                            : "Throw feast  •  1 Stone • 1 Wood • 1 Aurochs • 1 Mushroom", buttonStyle))
+                {
+                    ThrowFeast(activePlayer);
+                }
+                GUI.enabled = true;
+
                 if (GUI.Button(new Rect(x, Screen.height - 128f, contentWidth, 52f),
                         "Clear food and fuel", buttonStyle))
                 {
@@ -1211,17 +1279,6 @@ namespace OldenTop
             }
             else
             {
-                bool canThrowFeast = CanThrowFeast(activePlayer);
-                GUI.enabled = canThrowFeast;
-                if (GUI.Button(new Rect(x, Screen.height - 188f, contentWidth, 52f),
-                        feastThrownThisTurn[activePlayer]
-                            ? "Feast already held this season"
-                            : "Throw feast  •  1 Stone • 1 Wood • 1 Aurochs • 1 Mushroom", buttonStyle))
-                {
-                    ThrowFeast(activePlayer);
-                }
-                GUI.enabled = true;
-
                 string recallLabel = CanRecallActiveHearth
                     ? "Recall workers and hearth"
                     : "Reset this player's worker moves";
@@ -4256,7 +4313,7 @@ namespace OldenTop
 
         private bool CanThrowFeast(int player)
         {
-            if (foodAssignmentPhase || resolutionPhase || godPhase || feastThrownThisTurn[player])
+            if (!foodAssignmentPhase || resolutionPhase || godPhase || feastThrownThisTurn[player])
             {
                 return false;
             }
