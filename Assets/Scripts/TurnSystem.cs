@@ -568,24 +568,26 @@ namespace OldenTop
         private const int WorkersPerPlayer = 4;
         private const float PanelFraction = 0.25f;
         private const float DragThreshold = 6f;
-        private const float ResourceIconSize = 42f;
+        // These ratios reproduce the current 20x20 fitted-map marker sizes while making
+        // markers track the projected hex radius at every map size and zoom level.
+        private const float ResourceIconDiameterPerHexRadius = 0.85f;
+        private const float OccupiedResourceIconDiameterPerHexRadius = 0.6f;
         private const float StockpileResourceIconSize = 56f;
         private const float StockpilePlayerLabelGap = 8f;
         private static readonly int ResourceTypeCount = Enum.GetValues(typeof(Resource)).Length;
         private static readonly int ToolTypeCount = Enum.GetValues(typeof(Tool)).Length;
         private const float InventoryWorkerIconSize = 48f;
-        private const float MapWorkerIconSize = 32f;
+        private const float WorkerIconDiameterPerHexRadius = 0.455f;
         private const float WorkerEdgeInsetPixels = 2f;
         private const float SelectionPulseSpeed = 4.25f;
         private static readonly Color UnfulfilledFlashColor = new Color32(235, 75, 75, 255);
-        private const float HearthMarkerSize = 38f;
+        private const float HearthIconDiameterPerHexRadius = 0.54f;
         private const int WorkerMoveRange = 1;
         private const int TileContentSlotCount = 6;
         private const int TopWorkerSlot = 0;
         private const int BottomRightWorkerSlot = 2;
         private const int BottomLeftWorkerSlot = 4;
         private const float HexEdgeNormalProjection = 0.8660254f;
-        private const float MaximumZoomedResourceIconScale = 2f;
         private const float ZoomStepMultiplier = 0.85f;
         private const float MinimumZoomFraction = 0.35f;
         private const float MaximumZoomFraction = 1.35f;
@@ -673,6 +675,7 @@ namespace OldenTop
         private int resolvedYear;
         private GodEffect hiddenGodEffect;
         private GodEffect resolvedGodEffect;
+        private bool godEffectRevealed;
         private string statusMessage = "Player 1: place your hearth on any non-water hex.";
         private bool statusIsWarning;
 
@@ -711,36 +714,6 @@ namespace OldenTop
         public float MapCameraSize => mapCamera != null ? mapCamera.orthographicSize : 0f;
         public float MinimumMapCameraSize => fittedCameraSize * MinimumZoomFraction;
         public float MaximumMapCameraSize => fittedCameraSize * MaximumZoomFraction;
-        public float MapResourceIconSize
-        {
-            get
-            {
-                if (mapCamera == null)
-                {
-                    return ResourceIconSize;
-                }
-
-                float zoomInProgress = Mathf.InverseLerp(fittedCameraSize,
-                    MinimumMapCameraSize, mapCamera.orthographicSize);
-                return Mathf.Lerp(ResourceIconSize,
-                    ResourceIconSize * MaximumZoomedResourceIconScale, zoomInProgress);
-            }
-        }
-
-        private float OccupiedTileIconScale
-        {
-            get
-            {
-                if (mapCamera == null)
-                {
-                    return 1f;
-                }
-
-                float cameraSize = Mathf.Max(0.001f, mapCamera.orthographicSize);
-                return MaximumZoomedResourceIconScale * MinimumMapCameraSize / cameraSize;
-            }
-        }
-
         private void SetStatusMessage(string message, bool isWarning = false)
         {
             statusMessage = message;
@@ -877,6 +850,8 @@ namespace OldenTop
             y += 66f;
             GUI.Label(new Rect(x, y, contentWidth, 42f), $"Year {year}  •  {SeasonNames[seasonIndex]}", headingStyle);
             y += 48f;
+
+            y += DrawGodEffectsCard(x, y, contentWidth);
 
             string phaseText = godPhase
                 ? "GODS PHASE"
@@ -1265,9 +1240,7 @@ namespace OldenTop
                 }
 
                 Resource resource = map.GetSelectedResource(tile);
-                float iconSize = IsTileOccupied(tile)
-                    ? ResourceIconSize * OccupiedTileIconScale
-                    : MapResourceIconSize;
+                float iconSize = GetResourceIconSize(tile);
                 Rect iconRect = new Rect(screen.x - iconSize * 0.5f,
                     Screen.height - screen.y - iconSize * 0.5f, iconSize, iconSize);
                 DrawResourceIcon(iconRect, resource);
@@ -1805,8 +1778,8 @@ namespace OldenTop
             float contentWidth = dialog.width - 56f;
             GUI.Label(new Rect(x, dialog.y + 18f, contentWidth, 44f), "GODS PHASE", dialogTitleStyle);
 
-            Texture2D icon = GodIconCatalog.GetIcon();
             Rect iconRect = new Rect((Screen.width - 112f) * 0.5f, dialog.y + 76f, 112f, 112f);
+            Texture2D icon = GodIconCatalog.GetIcon();
             if (icon != null)
             {
                 GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, true);
@@ -1921,6 +1894,25 @@ namespace OldenTop
             return resultHeight + DrawGodGift(x, y + resultHeight, width, player);
         }
 
+        private float DrawGodEffectsCard(float x, float y, float width)
+        {
+            const float iconSize = 46f;
+            const float cardHeight = 82f;
+            Rect cardRect = new Rect(x, y, width, cardHeight);
+            GUI.Box(cardRect, GUIContent.none, panelStyle);
+            GUI.Label(new Rect(x + 10f, y + 3f, width - 20f, 26f), "GOD EFFECTS", smallBodyStyle);
+
+            Rect iconRect = new Rect(x + 10f, y + 30f, iconSize, iconSize);
+            DrawGodEffectIcon(iconRect, godEffectRevealed ? resolvedGodEffect : hiddenGodEffect,
+                godEffectRevealed);
+            string effectLabel = godEffectRevealed
+                ? GetGodGiftLabel(resolvedGodEffect)
+                : "Hidden until execution";
+            GUI.Label(new Rect(iconRect.xMax + 10f, y + 30f, width - iconSize - 30f, iconSize),
+                effectLabel, bodyStyle);
+            return cardHeight + 10f;
+        }
+
         private float DrawGodGift(float x, float y, float width, int player)
         {
             const float iconSize = 48f;
@@ -1937,6 +1929,64 @@ namespace OldenTop
             GUI.Label(new Rect(x + iconSize + 10f, y + 28f, width - iconSize - 10f, 30f),
                 giftLabel, bodyStyle);
             return iconSize + 14f;
+        }
+
+        private void DrawGodEffectIcon(Rect rect, GodEffect effect, bool revealed)
+        {
+            if (!revealed)
+            {
+                DrawHiddenGodEffectIcon(rect);
+                return;
+            }
+
+            if (TryGetGodEffectResource(effect, out Resource resource))
+            {
+                DrawResourceIcon(rect, resource);
+                return;
+            }
+
+            if (effect == GodEffect.GainSacrality)
+            {
+                Texture2D icon = GodIconCatalog.GetIcon();
+                if (icon != null)
+                {
+                    GUI.DrawTexture(rect, icon, ScaleMode.ScaleToFit, true);
+                    return;
+                }
+            }
+
+            DrawHiddenGodEffectIcon(rect);
+        }
+
+        private void DrawHiddenGodEffectIcon(Rect rect)
+        {
+            GUI.Box(rect, GUIContent.none, dialogStyle);
+            GUI.Label(rect, "?", dialogTitleStyle);
+        }
+
+        private static bool TryGetGodEffectResource(GodEffect effect, out Resource resource)
+        {
+            switch (effect)
+            {
+                case GodEffect.GainPreservedRoots:
+                    resource = Resource.Roots;
+                    return true;
+                case GodEffect.GainWood:
+                    resource = Resource.Wood;
+                    return true;
+                case GodEffect.GainPreservedAurochs:
+                    resource = Resource.Aurochs;
+                    return true;
+                case GodEffect.GainStone:
+                    resource = Resource.Stone;
+                    return true;
+                case GodEffect.GainPreservedMushrooms:
+                    resource = Resource.Mushrooms;
+                    return true;
+                default:
+                    resource = default;
+                    return false;
+            }
         }
 
         private static string GetGodGiftLabel(GodEffect effect)
@@ -2074,7 +2124,7 @@ namespace OldenTop
         private Rect GetPlacementSlotGuiRect(int tile, int slot)
         {
             Vector3 screen = GetWorkerSlotScreenPosition(tile, slot);
-            float markerSize = MapWorkerIconSize * OccupiedTileIconScale;
+            float markerSize = GetWorkerIconSize(tile);
             return new Rect(screen.x - markerSize * 0.5f,
                 Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
         }
@@ -2177,7 +2227,7 @@ namespace OldenTop
                             continue;
                         }
 
-                        float markerSize = MapWorkerIconSize * OccupiedTileIconScale;
+                        float markerSize = GetWorkerIconSize(tile);
                         Rect marker = new Rect(screen.x - markerSize * 0.5f,
                             Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
                         DrawWorkerIcon(marker, player, false, "placed", selected);
@@ -2246,7 +2296,7 @@ namespace OldenTop
                 }
 
                 Vector3 screen = GetWorkerSlotScreenPosition(tile, slot);
-                float size = MapWorkerIconSize * OccupiedTileIconScale;
+                float size = GetWorkerIconSize(tile);
                 Rect marker = new Rect(screen.x - size * 0.5f, Screen.height - screen.y - size * 0.5f, size, size);
                 if (marker.Contains(guiPoint))
                 {
@@ -2266,6 +2316,36 @@ namespace OldenTop
             }
 
             return GetHearthGuiRect(activePlayer).Contains(guiPoint);
+        }
+
+        private float GetResourceIconSize(int tile)
+        {
+            float diameterPerRadius = IsTileOccupied(tile)
+                ? OccupiedResourceIconDiameterPerHexRadius
+                : ResourceIconDiameterPerHexRadius;
+            return GetHexScreenRadius(tile) * diameterPerRadius;
+        }
+
+        private float GetWorkerIconSize(int tile)
+        {
+            return GetHexScreenRadius(tile) * WorkerIconDiameterPerHexRadius;
+        }
+
+        private float GetHearthIconSize(int tile)
+        {
+            return GetHexScreenRadius(tile) * HearthIconDiameterPerHexRadius;
+        }
+
+        private float GetHexScreenRadius(int tile)
+        {
+            if (mapCamera == null || map == null)
+            {
+                return 0f;
+            }
+
+            Vector3 center = mapCamera.WorldToScreenPoint(map.GetTileWorldPosition(tile));
+            Vector3 vertex = mapCamera.WorldToScreenPoint(map.GetTileVertexWorldPosition(tile, TopWorkerSlot));
+            return Vector2.Distance(center, vertex);
         }
 
         private Vector3 GetWorkerSlotScreenPosition(int tile, int slot)
@@ -2291,11 +2371,11 @@ namespace OldenTop
             {
                 if (hearthTiles[player] == tile)
                 {
-                    return HearthMarkerSize * OccupiedTileIconScale;
+                    return GetHearthIconSize(tile);
                 }
             }
 
-            return map.HasResource(tile) ? ResourceIconSize * OccupiedTileIconScale : 0f;
+            return map.HasResource(tile) ? GetResourceIconSize(tile) : 0f;
         }
 
         private void DrawHearthsOnMap()
@@ -2356,7 +2436,7 @@ namespace OldenTop
         {
             int tile = hearthTiles[player];
             Vector3 screen = mapCamera.WorldToScreenPoint(map.GetTileWorldPosition(tile));
-            float markerSize = HearthMarkerSize * OccupiedTileIconScale;
+            float markerSize = GetHearthIconSize(tile);
             return new Rect(screen.x - markerSize * 0.5f,
                 Screen.height - screen.y - markerSize * 0.5f, markerSize, markerSize);
         }
@@ -2931,6 +3011,7 @@ namespace OldenTop
             activePlayer = 0;
             ClearWorkerInteraction();
             hiddenGodEffect = GenerateHiddenGodEffect();
+            godEffectRevealed = false;
             godPhase = true;
             SetStatusMessage("The gods have set this season's hidden fate.");
         }
@@ -2981,6 +3062,7 @@ namespace OldenTop
             resolvedSeasonName = SeasonNames[seasonIndex];
             resolvedYear = year;
             resolvedGodEffect = hiddenGodEffect;
+            godEffectRevealed = true;
             ApplyGodGift();
             CollectAssignedResources();
             activePlayer = 0;
