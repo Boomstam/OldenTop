@@ -27,6 +27,17 @@ namespace OldenTop
         private const float HorizontalSpacing = 1.7320508f * HexRadius;
         private const float VerticalSpacing = 1.5f * HexRadius;
         private const int RiverSourceCount = 4;
+        private const float WaterFraction = 0.175f;
+        private const float MountainFraction = 0.175f;
+        private const float WoodlandFraction = 0.325f;
+        private const int MaximumMapGenerationAttempts = 512;
+        private const int LargeMapTileCount = 100;
+        private const int SmallMapEdgeClearance = 1;
+        private const int LargeMapEdgeClearance = 3;
+        private const int StartResourceSearchRange = 2;
+        private const int MinimumNearbyResourceVariety = 3;
+        private const int MinimumStartCandidateSeparation = 3;
+        private const int MaximumStartResourceVarietyDifference = 1;
         // Rivers are intentionally absent from the first playable prototype.
         private const bool RiversEnabled = false;
 
@@ -65,19 +76,16 @@ namespace OldenTop
 
         public int GeneratedTileCount => TileCount;
         public string MapSeed { get; private set; }
+        public string BaseMapSeed { get; private set; }
 
         public void Generate(string seed)
         {
             InitializeMapBuffers();
-            MapSeed = seed ?? string.Empty;
-            random = new System.Random(MapSeedUtility.ToInt32(MapSeed));
+            BaseMapSeed = seed ?? string.Empty;
 
             CreateSharedSprites();
             CalculateCenters();
-            GenerateTerrain();
-            selectedResources = ResourceSave.LoadOrCreate(MapSeed, terrain, Width, Height,
-                out bool[] generatedResourcePresence);
-            ResetResourcePresence(generatedResourcePresence);
+            int acceptedAttempt = FindBalancedMapAttempt();
             BuildTerrainObjects();
             if (RiversEnabled)
             {
@@ -92,9 +100,149 @@ namespace OldenTop
             int woodland = CountTerrain(Terrain.Woodland);
             int mountain = CountTerrain(Terrain.Mountain);
             int water = CountTerrain(Terrain.Water);
-            Debug.Log($"Map spawned (seed \"{MapSeed}\"): {Width}x{Height}, " +
+            Debug.Log($"Map spawned (base seed \"{BaseMapSeed}\", accepted seed \"{MapSeed}\", " +
+                      $"attempt {acceptedAttempt + 1}): {Width}x{Height}, " +
                       $"plains {plains}, woodland {woodland}, mountain {mountain}, " +
                       $"water {water}. Rivers {(RiversEnabled ? $"enabled ({riverEdges.Count} segments)" : "disabled")}.", this);
+        }
+
+        private int FindBalancedMapAttempt()
+        {
+            for (int attempt = 0; attempt < MaximumMapGenerationAttempts; attempt++)
+            {
+                MapSeed = GetAttemptSeed(attempt);
+                random = new System.Random(MapSeedUtility.ToInt32(MapSeed));
+                GenerateTerrain();
+
+                Resource[] candidateResources = ResourceSave.CreateBalancedLayout(MapSeed, terrain, Width, Height,
+                    out bool[] candidateResourcePresence);
+                if (!HasBalancedStartingPair(candidateResources, candidateResourcePresence))
+                {
+                    continue;
+                }
+
+                selectedResources = ResourceSave.LoadOrCreate(MapSeed, terrain, Width, Height,
+                    out bool[] generatedResourcePresence);
+                ResetResourcePresence(generatedResourcePresence);
+                return attempt;
+            }
+
+            throw new InvalidOperationException($"Could not generate a balanced {Width}x{Height} map from base seed " +
+                                                $"\"{BaseMapSeed}\" after {MaximumMapGenerationAttempts} attempts.");
+        }
+
+        private string GetAttemptSeed(int attempt)
+        {
+            return attempt == 0 ? BaseMapSeed : $"{BaseMapSeed}#{attempt}";
+        }
+
+        private bool HasBalancedStartingPair(IReadOnlyList<Resource> candidateResources,
+            IReadOnlyList<bool> candidateResourcePresence)
+        {
+            int requiredEdgeClearance = TileCount >= LargeMapTileCount
+                ? LargeMapEdgeClearance
+                : SmallMapEdgeClearance;
+            List<int> candidates = new List<int>();
+
+            for (int tile = 0; tile < TileCount; tile++)
+            {
+                if (terrain[tile] == Terrain.Water || GetDistanceToMapEdge(tile) < requiredEdgeClearance ||
+                    HasEmptyWaterOrMountainNearby(tile, candidateResourcePresence) ||
+                    !HasAdjacentResource(tile, Resource.Wood, candidateResources, candidateResourcePresence) ||
+                    !HasAdjacentResource(tile, Resource.Roots, candidateResources, candidateResourcePresence) ||
+                    GetNearbyResourceVariety(tile, candidateResources, candidateResourcePresence) <
+                    MinimumNearbyResourceVariety)
+                {
+                    continue;
+                }
+
+                candidates.Add(tile);
+            }
+
+            // TODO: When supporting more than two players, replace this pair check with selection of a
+            // mutually separated, similarly scored candidate set for every player.
+            for (int first = 0; first < candidates.Count; first++)
+            {
+                int firstVariety = GetNearbyResourceVariety(candidates[first], candidateResources,
+                    candidateResourcePresence);
+                for (int second = first + 1; second < candidates.Count; second++)
+                {
+                    if (GetHexDistance(candidates[first], candidates[second]) < MinimumStartCandidateSeparation)
+                    {
+                        continue;
+                    }
+
+                    int secondVariety = GetNearbyResourceVariety(candidates[second], candidateResources,
+                        candidateResourcePresence);
+                    if (Mathf.Abs(firstVariety - secondVariety) <= MaximumStartResourceVarietyDifference)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private bool HasAdjacentResource(int tile, Resource resource, IReadOnlyList<Resource> candidateResources,
+            IReadOnlyList<bool> candidateResourcePresence)
+        {
+            for (int candidate = 0; candidate < TileCount; candidate++)
+            {
+                if (GetHexDistance(tile, candidate) == 1 && candidateResourcePresence[candidate] &&
+                    candidateResources[candidate] == resource)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool HasEmptyWaterOrMountainNearby(int tile, IReadOnlyList<bool> candidateResourcePresence)
+        {
+            for (int candidate = 0; candidate < TileCount; candidate++)
+            {
+                if (GetHexDistance(tile, candidate) <= StartResourceSearchRange && !candidateResourcePresence[candidate] &&
+                    (terrain[candidate] == Terrain.Water || terrain[candidate] == Terrain.Mountain))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private int GetNearbyResourceVariety(int tile, IReadOnlyList<Resource> candidateResources,
+            IReadOnlyList<bool> candidateResourcePresence)
+        {
+            HashSet<Resource> resources = new HashSet<Resource>();
+            for (int candidate = 0; candidate < TileCount; candidate++)
+            {
+                if (GetHexDistance(tile, candidate) <= StartResourceSearchRange && candidateResourcePresence[candidate])
+                {
+                    resources.Add(candidateResources[candidate]);
+                }
+            }
+
+            return resources.Count;
+        }
+
+        private int GetDistanceToMapEdge(int tile)
+        {
+            int nearestEdgeDistance = int.MaxValue;
+            for (int candidate = 0; candidate < TileCount; candidate++)
+            {
+                FromIndex(candidate, out int column, out int row);
+                if (column != 0 && column != Width - 1 && row != 0 && row != Height - 1)
+                {
+                    continue;
+                }
+
+                nearestEdgeDistance = Mathf.Min(nearestEdgeDistance, GetHexDistance(tile, candidate));
+            }
+
+            return nearestEdgeDistance;
         }
 
         private void OnValidate()
@@ -260,9 +408,9 @@ namespace OldenTop
             List<int> byElevation = CreateIndexList();
             byElevation.Sort((a, b) => elevation[a].CompareTo(elevation[b]));
 
-            int waterCount = Mathf.RoundToInt(TileCount * 0.07f);
-            int mountainCount = Mathf.RoundToInt(TileCount * 0.11f);
-            int woodlandCount = Mathf.RoundToInt(TileCount * 0.30f);
+            int waterCount = Mathf.RoundToInt(TileCount * WaterFraction);
+            int mountainCount = Mathf.RoundToInt(TileCount * MountainFraction);
+            int woodlandCount = Mathf.RoundToInt(TileCount * WoodlandFraction);
 
             for (int i = 0; i < waterCount; i++)
             {

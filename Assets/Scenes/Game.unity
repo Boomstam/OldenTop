@@ -175,6 +175,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: be23da436ff6347c18ebbf853d4f6f24, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::OldenTop.HexMap
+  width: 10
+  height: 10
 --- !u!4 &265273149
 Transform:
   m_ObjectHideFlags: 0

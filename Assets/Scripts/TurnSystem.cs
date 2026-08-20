@@ -20,7 +20,9 @@ namespace OldenTop
     {
         Gather,
         Preserve,
-        Craft
+        Craft,
+        Ritual,
+        BuildMonument
     }
 
     public enum Tool
@@ -285,6 +287,22 @@ namespace OldenTop
         }
     }
 
+    public static class MonumentIconCatalog
+    {
+        private const string IconResourcePath = "MonumentIcons/dolmen";
+        private static Texture2D icon;
+
+        public static Texture2D GetIcon()
+        {
+            if (icon == null)
+            {
+                icon = Resources.Load<Texture2D>(IconResourcePath);
+            }
+
+            return icon;
+        }
+    }
+
     public static class AncestorIconCatalog
     {
         private const string IconResourcePath = "AncestorIcons/ancestor-tombstone";
@@ -329,7 +347,7 @@ namespace OldenTop
 
     public static class ResourceSave
     {
-        private const int CurrentVersion = 4;
+        private const int CurrentVersion = 5;
         private const string LayoutKey = "OldenTop.TileResourceLayout";
 
         [Serializable]
@@ -441,7 +459,7 @@ namespace OldenTop
             return true;
         }
 
-        private static Resource[] CreateBalancedLayout(string mapSeed, Terrain[] terrain,
+        public static Resource[] CreateBalancedLayout(string mapSeed, Terrain[] terrain,
             int width, int height, out bool[] resourcePresent)
         {
             Resource[] choices = new Resource[terrain.Length];
@@ -565,7 +583,9 @@ namespace OldenTop
     public sealed class TurnSystem : MonoBehaviour
     {
         private const int PlayerCount = 2;
-        private const int WorkersPerPlayer = 4;
+        private const int WorkersPerPlayer = 12;
+        private const int StartingWorkersPerPlayer = 4;
+        private const int MonumentStoneCost = 5;
         private const float PanelFraction = 0.25f;
         private const float DragThreshold = 6f;
         // These ratios reproduce the current 20x20 fitted-map marker sizes while making
@@ -582,6 +602,7 @@ namespace OldenTop
         private const float SelectionPulseSpeed = 4.25f;
         private static readonly Color UnfulfilledFlashColor = new Color32(235, 75, 75, 255);
         private const float HearthIconDiameterPerHexRadius = 0.54f;
+        private const float MonumentIconDiameterPerHexRadius = 0.62f;
         private const int WorkerMoveRange = 1;
         private const int TileContentSlotCount = 6;
         private const int TopWorkerSlot = 0;
@@ -633,6 +654,11 @@ namespace OldenTop
         private readonly int[] ancestorCounts = new int[PlayerCount];
         private readonly int[,] ancestorToolCounts = new int[PlayerCount, ToolTypeCount];
         private readonly int[] hearthTiles = { -1, -1 };
+        private readonly int[] monumentTiles = new int[PlayerCount * WorkersPerPlayer];
+        private readonly int[] monumentBuildSeasons = new int[PlayerCount * WorkersPerPlayer];
+        private readonly bool[] feastThrownThisTurn = new bool[PlayerCount];
+        private readonly bool[] feastScheduledNextSeason = new bool[PlayerCount];
+        private readonly bool[] feastMovementOnlyThisSeason = new bool[PlayerCount];
         private readonly List<int> highlightedTiles = new List<int>(7);
         private readonly List<int>[] occupiedTilesByPlayer =
         {
@@ -730,12 +756,16 @@ namespace OldenTop
                     : FindFirstObjectByType<Camera>();
             fittedCameraSize = mapCamera != null ? mapCamera.orthographicSize : 1f;
             ClearHearths();
+            ClearMonuments();
             ClearAssignments();
             ClearStockpiles();
             ClearLatestSeasonGains();
             Array.Clear(ancestorCounts, 0, ancestorCounts.Length);
             Array.Clear(ancestorToolCounts, 0, ancestorToolCounts.Length);
             Array.Clear(sacralityStockpiles, 0, sacralityStockpiles.Length);
+            Array.Clear(feastThrownThisTurn, 0, feastThrownThisTurn.Length);
+            Array.Clear(feastScheduledNextSeason, 0, feastScheduledNextSeason.Length);
+            Array.Clear(feastMovementOnlyThisSeason, 0, feastMovementOnlyThisSeason.Length);
             showSeasonGainsDialog = false;
             showFoodShortageDialog = false;
             godPhase = false;
@@ -778,6 +808,7 @@ namespace OldenTop
             GUI.enabled = !godPhase && !showSeasonGainsDialog && !showFoodShortageDialog;
             DrawTileResourceIcons();
             DrawHearthsOnMap();
+            DrawMonumentsOnMap();
             DrawWorkerBondsOnMap();
             DrawPlacementSlotsOnMap();
             DrawAssignmentsOnMap();
@@ -861,6 +892,8 @@ namespace OldenTop
                     ? $"PLAYER {activePlayer + 1} FEEDS & FUELS"
                 : IsPlacingHearth
                     ? $"PLAYER {activePlayer + 1} PLACES HEARTH"
+                    : feastMovementOnlyThisSeason[activePlayer]
+                        ? $"PLAYER {activePlayer + 1} MOVES ONLY"
                     : $"PLAYER {activePlayer + 1} ASSIGNS";
             Color previousColor = GUI.color;
             GUI.color = resolutionPhase || godPhase ? Color.white : PlayerColors[activePlayer];
@@ -935,6 +968,17 @@ namespace OldenTop
                 }
                 else
                 {
+                    bool canThrowFeast = CanThrowFeast(activePlayer);
+                    GUI.enabled = canThrowFeast;
+                    if (GUI.Button(new Rect(x, Screen.height - 188f, contentWidth, 52f),
+                            feastThrownThisTurn[activePlayer]
+                                ? "Feast already held this season"
+                                : "Throw feast  •  1 Stone • 1 Wood • 1 Aurochs • 1 Mushroom", buttonStyle))
+                    {
+                        ThrowFeast(activePlayer);
+                    }
+                    GUI.enabled = true;
+
                     string recallLabel = CanRecallActiveHearth
                         ? "Recall workers and hearth"
                         : "Reset this player's worker moves";
@@ -1376,7 +1420,7 @@ namespace OldenTop
             Color previousColor = GUI.color;
             GUI.color = PlayerColors[player];
             GUI.Label(new Rect(x + iconSize + 8f, y, width - iconSize - 8f, iconSize),
-                $"SACRALITY: {sacralityStockpiles[player]}", smallBodyStyle);
+                $"SACRALITY: {sacralityStockpiles[player]}  •  Monuments: {GetMonumentCount(player)}", smallBodyStyle);
             GUI.color = previousColor;
             return iconSize + 4f;
         }
@@ -1466,8 +1510,11 @@ namespace OldenTop
             }
 
             bool canPreserve = tile == hearthTiles[activePlayer] && HasEligiblePreserveTarget(actionMenuWorker);
+            bool canRitual = CanCommitRitual(activePlayer, actionMenuWorker);
+            bool canBuildMonument = CanCommitMonument(activePlayer, actionMenuWorker);
             float width = Mathf.Min(420f, Screen.width - 40f);
-            float height = 156f + craftableTools.Count * 52f + (canPreserve ? 56f : 0f);
+            float height = 156f + craftableTools.Count * 52f + (canPreserve ? 56f : 0f) +
+                           (canRitual ? 56f : 0f) + (canBuildMonument ? 56f : 0f);
             Rect dialog = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
             GUI.color = new Color32(20, 22, 20, 248);
             GUI.DrawTexture(dialog, Texture2D.whiteTexture, ScaleMode.StretchToFill);
@@ -1517,6 +1564,32 @@ namespace OldenTop
             if (canPreserve && GUI.Button(new Rect(x, actionY, contentWidth, 48f), "Preserve", buttonStyle))
             {
                 BeginPreserveTargetSelection(actionMenuWorker);
+                return;
+            }
+            if (canPreserve)
+            {
+                actionY += 56f;
+            }
+
+            if (canRitual && GUI.Button(new Rect(x, actionY, contentWidth, 48f),
+                    $"Ritual ({SeasonNames[seasonIndex]})  •  1 Mushroom • 1 Aurochs", buttonStyle))
+            {
+                SetWorkerActionToRitual(actionMenuWorker);
+                SetStatusMessage("Ritual selected. It will consume a Mushroom and Aurochs for +1 Sacrality during execution.");
+                CloseWorkerActionMenu();
+                return;
+            }
+            if (canRitual)
+            {
+                actionY += 56f;
+            }
+
+            if (canBuildMonument && GUI.Button(new Rect(x, actionY, contentWidth, 48f),
+                    "Build monument  •  5 Stone", buttonStyle))
+            {
+                SetWorkerActionToBuildMonument(actionMenuWorker);
+                SetStatusMessage("Build monument selected. It will replace this tile's resource during execution.");
+                CloseWorkerActionMenu();
             }
 
             Event current = Event.current;
@@ -1537,6 +1610,12 @@ namespace OldenTop
             if (resolutionPhase || foodAssignmentPhase || worker < 0 || worker >= WorkersPerPlayer ||
                 !workerAlive[activePlayer, worker] || assignments[activePlayer, worker] < 0)
             {
+                return;
+            }
+
+            if (feastMovementOnlyThisSeason[activePlayer])
+            {
+                SetStatusMessage("This tribe is feasting this season. Workers may move, but cannot perform actions.");
                 return;
             }
 
@@ -1589,6 +1668,102 @@ namespace OldenTop
             preserveTargetWorkers[activePlayer, worker] = -1;
         }
 
+        private void SetWorkerActionToRitual(int worker)
+        {
+            SetWorkerActionToGather(worker);
+            workerActions[activePlayer, worker] = WorkerAction.Ritual;
+        }
+
+        private void SetWorkerActionToBuildMonument(int worker)
+        {
+            SetWorkerActionToGather(worker);
+            workerActions[activePlayer, worker] = WorkerAction.BuildMonument;
+        }
+
+        private bool CanCommitRitual(int player, int worker)
+        {
+            if (player < 0 || player >= PlayerCount || worker < 0 || worker >= WorkersPerPlayer)
+            {
+                return false;
+            }
+
+            int tile = assignments[player, worker];
+            if (GetMonumentBuildSeason(tile) != seasonIndex)
+            {
+                return false;
+            }
+
+            int availableMushrooms = resourceStockpiles[player, (int)Resource.Mushrooms];
+            int availableAurochs = resourceStockpiles[player, (int)Resource.Aurochs];
+            for (int candidate = 0; candidate < WorkersPerPlayer; candidate++)
+            {
+                if (candidate != worker && workerActions[player, candidate] == WorkerAction.Ritual)
+                {
+                    availableMushrooms--;
+                    availableAurochs--;
+                }
+            }
+
+            return availableMushrooms > 0 && availableAurochs > 0;
+        }
+
+        private bool CanCommitMonument(int player, int worker)
+        {
+            if (map == null || player < 0 || player >= PlayerCount || worker < 0 || worker >= WorkersPerPlayer)
+            {
+                return false;
+            }
+
+            int tile = assignments[player, worker];
+            if (tile < 0 || tile == hearthTiles[player] || map.GetTerrain(tile) == Terrain.Water ||
+                IsMonumentTile(tile) || IsMonumentBuildCommitted(tile, worker))
+            {
+                return false;
+            }
+
+            int available = resourceStockpiles[player, (int)Resource.Stone];
+            for (int candidate = 0; candidate < WorkersPerPlayer; candidate++)
+            {
+                if (candidate != worker && workerActions[player, candidate] == WorkerAction.BuildMonument)
+                {
+                    available -= MonumentStoneCost;
+                }
+                else if (candidate != worker && workerActions[player, candidate] == WorkerAction.Craft)
+                {
+                    int toolIndex = craftTools[player, candidate];
+                    if (toolIndex >= 0 && toolIndex < ToolTypeCount &&
+                        ToolCatalog.UsesCost((Tool)toolIndex, Resource.Stone))
+                    {
+                        available -= ToolCatalog.GetCostAmount((Tool)toolIndex, Resource.Stone);
+                    }
+                }
+            }
+
+            return available >= MonumentStoneCost;
+        }
+
+        private bool IsMonumentBuildCommitted(int tile, int ignoredWorker)
+        {
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                if (feastMovementOnlyThisSeason[player])
+                {
+                    continue;
+                }
+
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
+                    if (worker != ignoredWorker && workerActions[player, worker] == WorkerAction.BuildMonument &&
+                        assignments[player, worker] == tile)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
         private bool CanCraftWithCommittedCosts(Tool tool, int craftingWorker)
         {
             foreach (Resource cost in ToolCatalog.GetCosts(tool))
@@ -1598,6 +1773,11 @@ namespace OldenTop
                 {
                     if (worker == craftingWorker || workerActions[activePlayer, worker] != WorkerAction.Craft)
                     {
+                        if (worker != craftingWorker && cost == Resource.Stone &&
+                            workerActions[activePlayer, worker] == WorkerAction.BuildMonument)
+                        {
+                            available -= MonumentStoneCost;
+                        }
                         continue;
                     }
 
@@ -2138,6 +2318,11 @@ namespace OldenTop
 
             for (int player = 0; player < PlayerCount; player++)
             {
+                if (feastMovementOnlyThisSeason[player])
+                {
+                    continue;
+                }
+
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
                     int target = preserveTargetWorkers[player, worker];
@@ -2336,6 +2521,11 @@ namespace OldenTop
             return GetHexScreenRadius(tile) * HearthIconDiameterPerHexRadius;
         }
 
+        private float GetMonumentIconSize(int tile)
+        {
+            return GetHexScreenRadius(tile) * MonumentIconDiameterPerHexRadius;
+        }
+
         private float GetHexScreenRadius(int tile)
         {
             if (mapCamera == null || map == null)
@@ -2373,6 +2563,11 @@ namespace OldenTop
                 {
                     return GetHearthIconSize(tile);
                 }
+            }
+
+            if (IsMonumentTile(tile))
+            {
+                return GetMonumentIconSize(tile);
             }
 
             return map.HasResource(tile) ? GetResourceIconSize(tile) : 0f;
@@ -2428,6 +2623,47 @@ namespace OldenTop
                     hoveredTooltip = foodAssignmentPhase && player == activePlayer
                         ? $"Player {player + 1} hearth • assign wood here"
                         : $"Player {player + 1} hearth";
+                }
+            }
+        }
+
+        private void DrawMonumentsOnMap()
+        {
+            if (mapCamera == null)
+            {
+                return;
+            }
+
+            for (int index = 0; index < monumentTiles.Length; index++)
+            {
+                int tile = monumentTiles[index];
+                if (tile < 0)
+                {
+                    continue;
+                }
+
+                Vector3 screen = mapCamera.WorldToScreenPoint(map.GetTileWorldPosition(tile));
+                if (screen.z < 0f)
+                {
+                    continue;
+                }
+
+                float size = GetMonumentIconSize(tile);
+                Rect marker = new Rect(screen.x - size * 0.5f,
+                    Screen.height - screen.y - size * 0.5f, size, size);
+                Texture2D monumentIcon = MonumentIconCatalog.GetIcon();
+                if (monumentIcon != null)
+                {
+                    GUI.DrawTexture(marker, monumentIcon, ScaleMode.ScaleToFit, true);
+                }
+                else
+                {
+                    GUI.Label(marker, "M", resourceFallbackStyle);
+                }
+
+                if (marker.Contains(Event.current.mousePosition))
+                {
+                    hoveredTooltip = $"Player {GetMonumentOwner(index) + 1} monument • vision quests here only in {SeasonNames[monumentBuildSeasons[index]]}";
                 }
             }
         }
@@ -2948,11 +3184,12 @@ namespace OldenTop
             map.RemoveResource(tile);
             for (int worker = 0; worker < WorkersPerPlayer; worker++)
             {
-                workerAlive[activePlayer, worker] = true;
-                assignments[activePlayer, worker] = tile;
-                assignmentSlots[activePlayer, worker] = worker;
-                turnStartTiles[activePlayer, worker] = tile;
-                turnStartSlots[activePlayer, worker] = worker;
+                bool startsAlive = worker < StartingWorkersPerPlayer;
+                workerAlive[activePlayer, worker] = startsAlive;
+                assignments[activePlayer, worker] = startsAlive ? tile : -1;
+                assignmentSlots[activePlayer, worker] = startsAlive ? worker : -1;
+                turnStartTiles[activePlayer, worker] = startsAlive ? tile : -1;
+                turnStartSlots[activePlayer, worker] = startsAlive ? worker : -1;
                 workerPlacedThisTurn[activePlayer, worker] = false;
             }
 
@@ -3093,7 +3330,7 @@ namespace OldenTop
                         AddPreservedGodFood(player, Resource.Mushrooms);
                         break;
                     case GodEffect.GainSacrality:
-                        sacralityStockpiles[player] += 2;
+                        AddSacrality(player, 2);
                         break;
                 }
             }
@@ -3116,6 +3353,11 @@ namespace OldenTop
             bool[,] preservedWorkers = new bool[PlayerCount, WorkersPerPlayer];
             for (int player = 0; player < PlayerCount; player++)
             {
+                if (feastMovementOnlyThisSeason[player])
+                {
+                    continue;
+                }
+
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
                     int target = preserveTargetWorkers[player, worker];
@@ -3129,6 +3371,36 @@ namespace OldenTop
 
             for (int player = 0; player < PlayerCount; player++)
             {
+                if (feastMovementOnlyThisSeason[player])
+                {
+                    continue;
+                }
+
+                for (int worker = 0; worker < WorkersPerPlayer; worker++)
+                {
+                    if (!workerAlive[player, worker])
+                    {
+                        continue;
+                    }
+
+                    if (workerActions[player, worker] == WorkerAction.BuildMonument)
+                    {
+                        TryBuildAssignedMonument(player, worker);
+                    }
+                    else if (workerActions[player, worker] == WorkerAction.Ritual)
+                    {
+                        TryResolveRitual(player, worker);
+                    }
+                }
+            }
+
+            for (int player = 0; player < PlayerCount; player++)
+            {
+                if (feastMovementOnlyThisSeason[player])
+                {
+                    continue;
+                }
+
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
                     if (workerAlive[player, worker] && workerActions[player, worker] == WorkerAction.Craft)
@@ -3140,6 +3412,11 @@ namespace OldenTop
 
             for (int player = 0; player < PlayerCount; player++)
             {
+                if (feastMovementOnlyThisSeason[player])
+                {
+                    continue;
+                }
+
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
                     if (!workerAlive[player, worker])
@@ -3147,7 +3424,9 @@ namespace OldenTop
                         continue;
                     }
 
-                    if (workerActions[player, worker] == WorkerAction.Craft)
+                    if (workerActions[player, worker] == WorkerAction.Craft ||
+                        workerActions[player, worker] == WorkerAction.Ritual ||
+                        workerActions[player, worker] == WorkerAction.BuildMonument)
                     {
                         continue;
                     }
@@ -3206,6 +3485,53 @@ namespace OldenTop
             latestSeasonToolGains[player, toolIndex]++;
         }
 
+        private void TryResolveRitual(int player, int worker)
+        {
+            int tile = assignments[player, worker];
+            if (resourceStockpiles[player, (int)Resource.Mushrooms] <= 0 ||
+                resourceStockpiles[player, (int)Resource.Aurochs] <= 0 ||
+                GetMonumentBuildSeason(tile) != seasonIndex)
+            {
+                return;
+            }
+
+            SpendFood(player, Resource.Mushrooms, 1);
+            SpendFood(player, Resource.Aurochs, 1);
+            AddSacrality(player, 1);
+        }
+
+        private void TryBuildAssignedMonument(int player, int worker)
+        {
+            if (!CanBuildMonumentAtExecution(player, worker))
+            {
+                return;
+            }
+
+            int tile = assignments[player, worker];
+            resourceStockpiles[player, (int)Resource.Stone] -= MonumentStoneCost;
+            AddMonument(player, tile, seasonIndex);
+            map.RemoveResource(tile);
+            UpdateOccupiedTileOutlines();
+        }
+
+        private bool CanBuildMonumentAtExecution(int player, int worker)
+        {
+            int tile = assignments[player, worker];
+            return map != null && tile >= 0 && map.GetTerrain(tile) != Terrain.Water &&
+                   tile != hearthTiles[player] && !IsMonumentTile(tile) &&
+                   resourceStockpiles[player, (int)Resource.Stone] >= MonumentStoneCost;
+        }
+
+        private void AddSacrality(int player, int amount)
+        {
+            if (amount <= 0 || player < 0 || player >= PlayerCount)
+            {
+                return;
+            }
+
+            sacralityStockpiles[player] += amount;
+        }
+
         private bool HasAppropriateTool(int player, int worker, Resource resource)
         {
             int tool = workerTools[player, worker];
@@ -3258,6 +3584,20 @@ namespace OldenTop
         public int GetSacralityAmount(int player)
         {
             return player >= 0 && player < PlayerCount ? sacralityStockpiles[player] : 0;
+        }
+
+        public int GetMonumentCount(int player)
+        {
+            int count = 0;
+            for (int index = 0; index < monumentTiles.Length; index++)
+            {
+                if (monumentTiles[index] >= 0 && GetMonumentOwner(index) == player)
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         public bool IsSeasonGainsDialogVisible => showSeasonGainsDialog;
@@ -3694,6 +4034,70 @@ namespace OldenTop
             }
         }
 
+        private bool CanThrowFeast(int player)
+        {
+            if (foodAssignmentPhase || resolutionPhase || godPhase || feastThrownThisTurn[player])
+            {
+                return false;
+            }
+
+            return resourceStockpiles[player, (int)Resource.Stone] >= 1 &&
+                   resourceStockpiles[player, (int)Resource.Wood] >= 1 &&
+                   resourceStockpiles[player, (int)Resource.Aurochs] >= 1 &&
+                   resourceStockpiles[player, (int)Resource.Mushrooms] >= 1 &&
+                   FindFirstInactiveWorker(player) >= 0;
+        }
+
+        private void ThrowFeast(int player)
+        {
+            if (!CanThrowFeast(player))
+            {
+                return;
+            }
+
+            resourceStockpiles[player, (int)Resource.Stone]--;
+            resourceStockpiles[player, (int)Resource.Wood]--;
+            SpendFood(player, Resource.Aurochs, 1);
+            SpendFood(player, Resource.Mushrooms, 1);
+
+            int newWorker = FindFirstInactiveWorker(player);
+            workerAlive[player, newWorker] = true;
+            assignments[player, newWorker] = hearthTiles[player];
+            assignmentSlots[player, newWorker] = FindFirstAvailableTileSlot(hearthTiles[player]);
+            turnStartTiles[player, newWorker] = hearthTiles[player];
+            turnStartSlots[player, newWorker] = assignmentSlots[player, newWorker];
+            workerPlacedThisTurn[player, newWorker] = false;
+            workerActions[player, newWorker] = WorkerAction.Gather;
+            feastThrownThisTurn[player] = true;
+            feastScheduledNextSeason[player] = true;
+            AddSacrality(player, 1 + GetMonumentCount(player));
+            SetStatusMessage($"Feast held: +{1 + GetMonumentCount(player)} Sacrality and one new worker. Next season, workers may move but cannot act.");
+            UpdateOccupiedTileOutlines();
+        }
+
+        private void SpendFood(int player, Resource food, int amount)
+        {
+            int resourceIndex = (int)food;
+            int freshSpent = Mathf.Min(amount, freshFoodStockpiles[player, resourceIndex]);
+            freshFoodStockpiles[player, resourceIndex] -= freshSpent;
+            int preservedSpent = amount - freshSpent;
+            preservedFoodStockpiles[player, resourceIndex] -= preservedSpent;
+            resourceStockpiles[player, resourceIndex] -= amount;
+        }
+
+        private int FindFirstInactiveWorker(int player)
+        {
+            for (int worker = 0; worker < WorkersPerPlayer; worker++)
+            {
+                if (!workerAlive[player, worker])
+                {
+                    return worker;
+                }
+            }
+
+            return -1;
+        }
+
         private void RecallActivePlayerPieces()
         {
             if (CanRecallActiveHearth)
@@ -3752,8 +4156,11 @@ namespace OldenTop
 
         private void PrepareSeasonWorkerMoves()
         {
+            Array.Clear(feastThrownThisTurn, 0, feastThrownThisTurn.Length);
             for (int player = 0; player < PlayerCount; player++)
             {
+                feastMovementOnlyThisSeason[player] = feastScheduledNextSeason[player];
+                feastScheduledNextSeason[player] = false;
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
                     turnStartTiles[player, worker] = assignments[player, worker];
@@ -3783,7 +4190,9 @@ namespace OldenTop
                 return;
             }
 
-            SetStatusMessage($"Player {activePlayer + 1}: a worker is selected. Choose an available slot.");
+            SetStatusMessage(feastMovementOnlyThisSeason[activePlayer]
+                ? $"Player {activePlayer + 1} is feasting. Workers may move, but cannot perform actions this season."
+                : $"Player {activePlayer + 1}: a worker is selected. Choose an available slot.");
             UpdateWorkerPlacementHighlights();
         }
 
@@ -3871,6 +4280,11 @@ namespace OldenTop
                     return true;
                 }
 
+                if (IsMonumentOwnedBy(player, tile))
+                {
+                    return true;
+                }
+
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
                     if (workerAlive[player, worker] && assignments[player, worker] == tile)
@@ -3891,6 +4305,11 @@ namespace OldenTop
                 {
                     return true;
                 }
+            }
+
+            if (IsMonumentTile(tile))
+            {
+                return true;
             }
 
             return GetTilePeripheralContentCount(tile) > 0;
@@ -3975,6 +4394,13 @@ namespace OldenTop
                 List<int> occupiedTiles = occupiedTilesByPlayer[player];
                 occupiedTiles.Clear();
                 AddOccupiedTile(occupiedTiles, hearthTiles[player]);
+                for (int monument = 0; monument < monumentTiles.Length; monument++)
+                {
+                    if (GetMonumentOwner(monument) == player)
+                    {
+                        AddOccupiedTile(occupiedTiles, monumentTiles[monument]);
+                    }
+                }
                 for (int worker = 0; worker < WorkersPerPlayer; worker++)
                 {
                     if (workerAlive[player, worker])
@@ -4009,7 +4435,7 @@ namespace OldenTop
                     turnStartTiles[player, worker] = -1;
                     turnStartSlots[player, worker] = -1;
                     workerPlacedThisTurn[player, worker] = false;
-                    workerAlive[player, worker] = true;
+                    workerAlive[player, worker] = worker < StartingWorkersPerPlayer;
                     workerActions[player, worker] = WorkerAction.Gather;
                     preserveTargetWorkers[player, worker] = -1;
                     assignedFood[player, worker] = -1;
@@ -4028,6 +4454,72 @@ namespace OldenTop
             {
                 hearthTiles[player] = -1;
             }
+        }
+
+        private void ClearMonuments()
+        {
+            for (int index = 0; index < monumentTiles.Length; index++)
+            {
+                monumentTiles[index] = -1;
+                monumentBuildSeasons[index] = -1;
+            }
+        }
+
+        private void AddMonument(int player, int tile, int buildSeason)
+        {
+            for (int slot = player * WorkersPerPlayer; slot < (player + 1) * WorkersPerPlayer; slot++)
+            {
+                if (monumentTiles[slot] < 0)
+                {
+                    monumentTiles[slot] = tile;
+                    monumentBuildSeasons[slot] = buildSeason;
+                    return;
+                }
+            }
+        }
+
+        private bool IsMonumentTile(int tile)
+        {
+            for (int index = 0; index < monumentTiles.Length; index++)
+            {
+                if (monumentTiles[index] == tile)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsMonumentOwnedBy(int player, int tile)
+        {
+            for (int index = player * WorkersPerPlayer; index < (player + 1) * WorkersPerPlayer; index++)
+            {
+                if (monumentTiles[index] == tile)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private int GetMonumentBuildSeason(int tile)
+        {
+            for (int index = 0; index < monumentTiles.Length; index++)
+            {
+                if (monumentTiles[index] == tile)
+                {
+                    return monumentBuildSeasons[index];
+                }
+            }
+
+            return -1;
+        }
+
+        private int GetMonumentOwner(int index)
+        {
+            return index >= 0 && index < monumentTiles.Length ? index / WorkersPerPlayer : -1;
         }
 
         private void ClearStockpiles()
