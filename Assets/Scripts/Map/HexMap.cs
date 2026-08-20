@@ -14,13 +14,21 @@ namespace OldenTop
 
     public sealed class HexMap : MonoBehaviour
     {
-        private const int Width = 10;
-        private const int Height = 10;
-        private const int TileCount = Width * Height;
+        [Header("Map Dimensions")]
+        [Tooltip("Number of hex columns generated for this map.")]
+        [Min(1)] [SerializeField] private int width = 10;
+        [Tooltip("Number of hex rows generated for this map.")]
+        [Min(1)] [SerializeField] private int height = 10;
+
+        private int Width => width;
+        private int Height => height;
+        private int TileCount => Width * Height;
         private const float HexRadius = 0.62f;
         private const float HorizontalSpacing = 1.7320508f * HexRadius;
         private const float VerticalSpacing = 1.5f * HexRadius;
         private const int RiverSourceCount = 4;
+        // Rivers are intentionally absent from the first playable prototype.
+        private const bool RiversEnabled = false;
 
         private static readonly Color32 PlainsColor = new Color32(174, 194, 104, 255);
         private static readonly Color32 WoodlandColor = new Color32(65, 113, 72, 255);
@@ -29,11 +37,11 @@ namespace OldenTop
         private static readonly Color32 RiverBankColor = new Color32(43, 91, 119, 255);
         private static readonly Color32 RiverColor = new Color32(86, 184, 221, 255);
 
-        private readonly Terrain[] terrain = new Terrain[TileCount];
-        private readonly float[] elevation = new float[TileCount];
-        private readonly float[] moisture = new float[TileCount];
-        private readonly Vector2[] centers = new Vector2[TileCount];
-        private readonly int[,] tileCornerVertices = new int[TileCount, 6];
+        private Terrain[] terrain;
+        private float[] elevation;
+        private float[] moisture;
+        private Vector2[] centers;
+        private int[,] tileCornerVertices;
         private readonly List<Vector2> riverVertices = new List<Vector2>();
         private readonly List<List<int>> riverVertexNeighbors = new List<List<int>>();
         private readonly List<List<int>> riverVertexTiles = new List<List<int>>();
@@ -48,18 +56,19 @@ namespace OldenTop
         private Sprite circleSprite;
         private Transform tileRoot;
         private Transform riverRoot;
-        private readonly GameObject[] tileObjects = new GameObject[TileCount];
-        private readonly SpriteRenderer[] tileHighlightRenderers = new SpriteRenderer[TileCount];
-        private readonly SpriteRenderer[] tileOccupancyOutlineRenderers = new SpriteRenderer[TileCount];
-        private Resource[] selectedResources = new Resource[TileCount];
-        private readonly bool[] naturalResourcePresent = CreateInitialResourcePresence();
-        private readonly bool[] resourcePresent = CreateInitialResourcePresence();
+        private GameObject[] tileObjects;
+        private SpriteRenderer[] tileHighlightRenderers;
+        private SpriteRenderer[] tileOccupancyOutlineRenderers;
+        private Resource[] selectedResources;
+        private bool[] naturalResourcePresent;
+        private bool[] resourcePresent;
 
         public int GeneratedTileCount => TileCount;
         public string MapSeed { get; private set; }
 
         public void Generate(string seed)
         {
+            InitializeMapBuffers();
             MapSeed = seed ?? string.Empty;
             random = new System.Random(MapSeedUtility.ToInt32(MapSeed));
 
@@ -69,11 +78,14 @@ namespace OldenTop
             selectedResources = ResourceSave.LoadOrCreate(MapSeed, terrain, Width, Height,
                 out bool[] generatedResourcePresence);
             ResetResourcePresence(generatedResourcePresence);
-            BuildRiverGraph();
-            GenerateRivers();
-            ValidateRiverEdges();
             BuildTerrainObjects();
-            BuildRiverObjects();
+            if (RiversEnabled)
+            {
+                BuildRiverGraph();
+                GenerateRivers();
+                ValidateRiverEdges();
+                BuildRiverObjects();
+            }
             FrameMapWithCamera();
 
             int plains = CountTerrain(Terrain.Plains);
@@ -82,8 +94,28 @@ namespace OldenTop
             int water = CountTerrain(Terrain.Water);
             Debug.Log($"Map spawned (seed \"{MapSeed}\"): {Width}x{Height}, " +
                       $"plains {plains}, woodland {woodland}, mountain {mountain}, " +
-                      $"water {water}, edge-following river segments {riverEdges.Count}. " +
-                      "River edge invariant verified.", this);
+                      $"water {water}. Rivers {(RiversEnabled ? $"enabled ({riverEdges.Count} segments)" : "disabled")}.", this);
+        }
+
+        private void OnValidate()
+        {
+            width = Mathf.Max(1, width);
+            height = Mathf.Max(1, height);
+        }
+
+        private void InitializeMapBuffers()
+        {
+            terrain = new Terrain[TileCount];
+            elevation = new float[TileCount];
+            moisture = new float[TileCount];
+            centers = new Vector2[TileCount];
+            tileCornerVertices = new int[TileCount, 6];
+            tileObjects = new GameObject[TileCount];
+            tileHighlightRenderers = new SpriteRenderer[TileCount];
+            tileOccupancyOutlineRenderers = new SpriteRenderer[TileCount];
+            selectedResources = new Resource[TileCount];
+            naturalResourcePresent = CreateInitialResourcePresence();
+            resourcePresent = CreateInitialResourcePresence();
         }
 
         private void CreateSharedSprites()
@@ -968,7 +1000,7 @@ namespace OldenTop
             }
         }
 
-        private static List<int> CreateIndexList()
+        private List<int> CreateIndexList()
         {
             List<int> result = new List<int>(TileCount);
             for (int i = 0; i < TileCount; i++)
@@ -979,7 +1011,7 @@ namespace OldenTop
             return result;
         }
 
-        private static bool[] CreateInitialResourcePresence()
+        private bool[] CreateInitialResourcePresence()
         {
             bool[] result = new bool[TileCount];
             for (int tile = 0; tile < result.Length; tile++)
@@ -1006,12 +1038,12 @@ namespace OldenTop
             return Mathf.Lerp(minimum, maximum, (float)random.NextDouble());
         }
 
-        private static int ToIndex(int column, int row)
+        private int ToIndex(int column, int row)
         {
             return row * Width + column;
         }
 
-        private static void FromIndex(int index, out int column, out int row)
+        private void FromIndex(int index, out int column, out int row)
         {
             column = index % Width;
             row = index / Width;

@@ -97,7 +97,7 @@ MonoBehaviour:
   m_MinSize: {x: 350, y: 476}
   m_MaxSize: {x: 350, y: 476}
   vertical: 0
-  controlID: 506
+  controlID: 110
   draggingID: 0
 --- !u!114 &5
 MonoBehaviour:
@@ -122,7 +122,7 @@ MonoBehaviour:
   m_MinSize: {x: 300, y: 112}
   m_MaxSize: {x: 24288, y: 16192}
   vertical: 1
-  controlID: 82
+  controlID: 4
   draggingID: 0
 --- !u!114 &6
 MonoBehaviour:
@@ -174,7 +174,7 @@ MonoBehaviour:
   m_MinSize: {x: 100, y: 112}
   m_MaxSize: {x: 8096, y: 16192}
   vertical: 1
-  controlID: 84
+  controlID: 6
   draggingID: 0
 --- !u!114 &8
 MonoBehaviour:
@@ -277,7 +277,7 @@ MonoBehaviour:
   m_MinSize: {x: 300, y: 112}
   m_MaxSize: {x: 24288, y: 16192}
   vertical: 0
-  controlID: 83
+  controlID: 5
   draggingID: 0
 --- !u!114 &12
 MonoBehaviour:
@@ -755,26 +755,6 @@ MonoBehaviour:
       m_LastClickedID:
         m_Data: 0
       m_ExpandedIDs:
-      - m_Data: -44174
-      - m_Data: -43806
-      - m_Data: -43772
-      - m_Data: -43712
-      - m_Data: -43572
-      - m_Data: -43544
-      - m_Data: -43484
-      - m_Data: -43364
-      - m_Data: -43280
-      - m_Data: -40804
-      - m_Data: -40660
-      - m_Data: -40516
-      - m_Data: -40368
-      - m_Data: -40224
-      - m_Data: -40076
-      - m_Data: -39932
-      - m_Data: -39788
-      - m_Data: -39644
-      - m_Data: -39496
-      - m_Data: -13312
       - m_Data: -1358
       m_RenameOverlay:
         m_UserAcceptedRename: 0
